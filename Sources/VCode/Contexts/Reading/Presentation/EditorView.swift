@@ -29,7 +29,6 @@ final class EditorView: NSView, NSSplitViewDelegate {
         split.isVertical = true
         split.dividerStyle = .thin
         split.delegate = self
-        split.addArrangedSubview(left)
         split.addArrangedSubview(right)
         message.alignment = .center
         message.maximumNumberOfLines = 3
@@ -82,6 +81,13 @@ final class EditorView: NSView, NSSplitViewDelegate {
         message.isHidden = true
         split.isHidden = false
         left.isHidden = !diff
+        // A hidden arranged pane can leave AppKit's cached divider overlay at
+        // the old midpoint. Source mode must actually contain just one pane.
+        if diff {
+            if left.superview !== split { split.insertArrangedSubview(left, at: 0) }
+        } else {
+            left.removeFromSuperview()
+        }
         split.needsDisplay = true
         if !unchanged {
             if diff {
@@ -133,6 +139,8 @@ final class EditorView: NSView, NSSplitViewDelegate {
         changeIndex = -1
         left.show(lines: [], path: "", title: "", detail: "")
         right.show(lines: [], path: "", title: "", detail: "")
+        left.isHidden = true
+        left.removeFromSuperview()
         split.isHidden = true
         tabs.isHidden = true
         breadcrumbs.isHidden = true
@@ -179,11 +187,16 @@ final class EditorView: NSView, NSSplitViewDelegate {
         if preview { window?.makeFirstResponder(markdown.text) } else { window?.makeFirstResponder(right.text) }
     }
     func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { subview == left }
+    func splitView(_ splitView: NSSplitView, shouldHideDividerAt dividerIndex: Int) -> Bool { !showingDiff }
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { 180 }
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { splitView.bounds.width - 180 }
 }
 
 private final class ReadingSplitView: NSSplitView {
-    override var dividerThickness: CGFloat { arrangedSubviews.filter { !$0.isHidden }.count > 1 ? 8 : 0 }
+    override var dividerThickness: CGFloat { 8 }
     override var dividerColor: NSColor { Theme.background }
+    override func drawDivider(in rect: NSRect) {
+        guard arrangedSubviews.count > 1 else { return }
+        super.drawDivider(in: rect)
+    }
 }

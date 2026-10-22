@@ -5,6 +5,37 @@ import XCTest
 final class PresentationTests: XCTestCase {
     override func setUp() { _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .darkAqua) }
 
+    func testSourceHasNoRetainedDividerAfterDiffAndWindowResize() throws {
+        let editor = EditorView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = editor
+        defer { withExtendedLifetime(window) {} }
+        let before = "export const value = 1;\n"
+        let after = "export const value = 2;\n"
+        let snapshot = FileSnapshot(path: "main.ts", before: before, after: after, rows: [DiffRow(left: CodeLine(number: 1, text: before, kind: .removed), right: CodeLine(number: 1, text: after, kind: .added))], message: nil, isBinary: false)
+        for diff in [false, true, false, true, false] {
+            editor.prepare(path: snapshot.path, diff: diff, isGit: true)
+            editor.show(snapshot, diff: diff, preserveScroll: false)
+            for width: CGFloat in [1400, 700, 1800] {
+                window.setContentSize(NSSize(width: width, height: 600))
+                editor.layoutSubtreeIfNeeded()
+                let split = try XCTUnwrap(editor.right.superview as? NSSplitView)
+                split.adjustSubviews()
+                XCTAssertEqual(split.arrangedSubviews.count, diff ? 2 : 1)
+                XCTAssertTrue(split.arrangedSubviews.last === editor.right)
+                XCTAssertEqual(editor.splitView(split, shouldHideDividerAt: 0), !diff)
+                if diff {
+                    XCTAssertTrue(split.arrangedSubviews.first === editor.left)
+                    XCTAssertEqual(editor.right.frame.minX - editor.left.frame.maxX, 8, accuracy: 0.5)
+                } else {
+                    XCTAssertNil(editor.left.superview, "A merely hidden pane can leave a divider overlay over the source")
+                    XCTAssertEqual(editor.right.frame.minX, 0, accuracy: 0.5)
+                    XCTAssertEqual(editor.right.frame.width, split.bounds.width, accuracy: 0.5)
+                }
+            }
+        }
+    }
+
     func testGlassUsesNativeMaterialAndKeepsItsContentInteractive() throws {
         let button = Theme.actionButton("Open")
         let surface = GlassSurface(content: button)
@@ -73,7 +104,7 @@ final class PresentationTests: XCTestCase {
             XCTAssertNil(editor.activePath)
             XCTAssertFalse(editor.welcome.isHidden)
             XCTAssertTrue(editor.breadcrumbs.isHidden)
-            XCTAssertTrue(editor.left.superview?.isHidden == true)
+            XCTAssertTrue(editor.left.isHiddenOrHasHiddenAncestor)
             XCTAssertTrue(editor.left.text.string.isEmpty)
             XCTAssertTrue(editor.right.text.string.isEmpty)
             editor.show(snapshot, diff: diff, preserveScroll: false)
@@ -187,10 +218,13 @@ final class PresentationTests: XCTestCase {
         controller.showChanges()
         XCTAssertEqual(tree.heading.stringValue, "CHANGES")
         controller.openFile("src/workspace.ts", diff: true)
-        let panes = find(CodePane.self, in: controller.view)
-        XCTAssertEqual(panes.count, 2)
-        let rendered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in panes.count == 2 && panes[1].text.string.contains("readonly") }, object: nil)
+        var panes: [CodePane] = []
+        let rendered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            panes = find(CodePane.self, in: controller.view)
+            return panes.count == 2 && panes[1].text.string.contains("readonly")
+        }, object: nil)
         wait(for: [rendered], timeout: 8)
+        guard panes.count == 2 else { return XCTFail("Diff must attach both panes after loading") }
         controller.view.layoutSubtreeIfNeeded()
         XCTAssertFalse(panes[0].isHidden)
         XCTAssertEqual(panes[0].lines.count, panes[1].lines.count)
@@ -244,7 +278,7 @@ final class PresentationTests: XCTestCase {
         let editor = try XCTUnwrap(find(EditorView.self, in: controller.view).first)
         XCTAssertFalse(editor.welcome.isHidden)
         XCTAssertTrue(editor.breadcrumbs.isHidden)
-        XCTAssertTrue(panes[0].superview?.isHidden == true)
+        XCTAssertTrue(panes[0].isHiddenOrHasHiddenAncestor)
         XCTAssertNil(editor.activePath)
         withExtendedLifetime(window) {}
     }
