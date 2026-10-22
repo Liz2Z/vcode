@@ -1,0 +1,33 @@
+#!/bin/bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+if [[ ! -d Tools/TypeScript/node_modules/typescript-language-server ]]; then
+    npm ci --prefix Tools/TypeScript --ignore-scripts --registry=https://registry.npmjs.org --no-audit --no-fund
+fi
+
+/usr/bin/swift build -c release
+mkdir -p dist
+staging="$(mktemp -d "$(pwd)/dist/.vcode-build.XXXXXX")"
+trap 'rm -rf "$staging"' EXIT
+app="$staging/VCode.app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/TypeScript"
+cp .build/release/VCode "$app/Contents/MacOS/VCode"
+cp Resources/Info.plist "$app/Contents/Info.plist"
+rm -rf "$app/Contents/Resources/TypeScript/node_modules"
+cp -R Tools/TypeScript/node_modules "$app/Contents/Resources/TypeScript/"
+
+# Bundle Node so opening the app from Finder does not depend on a shell profile.
+node_binary="$(node -p 'process.execPath')"
+mkdir -p "$app/Contents/Resources/Runtime"
+cp "$node_binary" "$app/Contents/Resources/Runtime/node"
+node_license="$(dirname "$node_binary")/../LICENSE"
+if [[ -f "$node_license" ]]; then cp "$node_license" "$app/Contents/Resources/Runtime/LICENSE"; fi
+/usr/bin/swift scripts/MakeIcon.swift "$app/Contents/Resources/AppIcon.icns"
+/usr/bin/codesign --force --deep --sign - "$app"
+destination="$(pwd)/dist/VCode.app"
+previous="$(pwd)/.build/Previous-VCode.app"
+rm -rf "$previous"
+if [[ -d "$destination" ]]; then mv "$destination" "$previous"; fi
+mv "$app" "$destination"
+printf 'Built %s\n' "$destination"

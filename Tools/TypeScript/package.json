@@ -1,0 +1,10 @@
+{
+  "name": "vcode-typescript-service",
+  "private": true,
+  "version": "0.1.0",
+  "description": "On-demand TypeScript language service for the native VCode app",
+  "dependencies": {
+    "typescript": "^6.0.0",
+    "typescript-language-server": "6.0.2"
+  }
+}
