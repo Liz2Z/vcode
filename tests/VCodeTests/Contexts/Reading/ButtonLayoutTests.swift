@@ -5,6 +5,27 @@ import XCTest
 final class ButtonLayoutTests: XCTestCase {
     override func setUp() { _ = NSApplication.shared }
 
+    func testSidebarTitlesFitAfterRepeatedNarrowAndWideLayouts() throws {
+        let navigation = WorkspaceNavigation()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 40), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = navigation
+        defer { withExtendedLifetime(window) {} }
+        for width: CGFloat in [360, 208, 280, 208, 360, 240, 208] {
+            window.setContentSize(NSSize(width: width, height: 40))
+            navigation.select(changes: width == 208)
+            navigation.layoutSubtreeIfNeeded()
+            for button in [navigation.files, navigation.changes] {
+                let stack = try XCTUnwrap(button.subviews.compactMap { $0 as? NSStackView }.first)
+                let label = try XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? NSTextField }.first)
+                let image = try XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? NSImageView }.first)
+                XCTAssertGreaterThanOrEqual(label.frame.width, label.intrinsicContentSize.width - 0.5, "Fixed navigation titles must not truncate at width \(width)")
+                XCTAssertEqual(image.frame.width, 14, accuracy: 0.5)
+                XCTAssertGreaterThanOrEqual(stack.frame.minX, 7.5)
+                XCTAssertLessThanOrEqual(stack.frame.maxX, button.bounds.width - 7.5)
+            }
+        }
+    }
+
     func testIconAndTitleStayCenteredWhenTruncatedOrStateChanges() throws {
         let button = Theme.actionButton("Worktree", symbol: "folder")
         button.horizontalPadding = 12

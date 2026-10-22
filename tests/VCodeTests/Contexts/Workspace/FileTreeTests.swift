@@ -5,6 +5,112 @@ import XCTest
 final class FileTreeTests: XCTestCase {
     override func setUp() { _ = NSApplication.shared }
 
+    func testGroupCountsStayBesideTitlesAndOutsideScrollbarAfterResizeAndCollapse() throws {
+        let tree = FileTree()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 500), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = tree
+        defer { withExtendedLifetime(window) {} }
+        let root = URL(fileURLWithPath: "/tmp/group-count-layout")
+        let paths = (0..<137).map { "docs/api-\($0).md" }
+        let changes = paths.map { GitChange(path: $0, kind: .modified, comparison: .unstaged) }
+        tree.show(WorkspaceState(root: root, files: paths, git: GitStatus(root: root, branch: "main", files: paths, changes: changes, hasHead: true)), changesOnly: true)
+        let scroll = try XCTUnwrap(tree.outline.enclosingScrollView)
+        XCTAssertEqual(scroll.scrollerStyle, .legacy, "Scrollbar must reserve space rather than cover row contents")
+        let section = try XCTUnwrap(tree.outline.item(atRow: 1) as? FileNode)
+        for width: CGFloat in [360, 208, 280, 208, 360] {
+            window.setContentSize(NSSize(width: width, height: 500))
+            for expanded in [true, false, true] {
+                if expanded { tree.outline.expandItem(section, expandChildren: true) }
+                else { tree.outline.collapseItem(section) }
+                tree.layoutSubtreeIfNeeded()
+                tree.outline.layoutSubtreeIfNeeded()
+                for row in [0, 1] {
+                    let cell = try XCTUnwrap(tree.outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? FileCell)
+                    cell.layoutSubtreeIfNeeded()
+                    XCTAssertTrue(cell.icon.isHidden)
+                    XCTAssertEqual(cell.icon.frame.width, 0, accuracy: 0.5)
+                    let title = cell.label.alignmentRect(forFrame: cell.label.frame)
+                    let badge = cell.badge.alignmentRect(forFrame: cell.badge.frame)
+                    XCTAssertEqual(title.minX, 4, accuracy: 0.5, "Hidden folder icon must leave no empty icon slot")
+                    XCTAssertEqual(badge.minX - title.maxX, 8, accuracy: 0.5)
+                    XCTAssertEqual(cell.badge.alignment, .left)
+                    XCTAssertGreaterThanOrEqual(cell.label.frame.width, cell.label.intrinsicContentSize.width - 0.5)
+                    XCTAssertGreaterThanOrEqual(cell.badge.frame.width, cell.badge.intrinsicContentSize.width - 0.5)
+                    XCTAssertEqual(cell.badge.stringValue, row == 0 ? "0" : "137")
+                    let badgeInScroll = cell.badge.convert(cell.badge.bounds, to: scroll)
+                    if let scroller = scroll.verticalScroller, !scroller.isHidden {
+                        XCTAssertLessThan(badgeInScroll.maxX, scroller.frame.minX)
+                    }
+                }
+            }
+        }
+    }
+
+    func testReusingSectionCellForFileRestoresIconAndTrailingStatus() throws {
+        let cell = FileCell()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 30), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = cell
+        defer { withExtendedLifetime(window) {} }
+        cell.label.stringValue = "Unstaged Changes"
+        for section in [true, false, true, false] {
+            cell.isSection = section
+            cell.badge.stringValue = section ? "9" : "M"
+            cell.layoutSubtreeIfNeeded()
+            XCTAssertEqual(cell.icon.isHidden, section)
+            XCTAssertEqual(cell.icon.frame.width, section ? 0 : 16, accuracy: 0.5)
+            let title = cell.label.alignmentRect(forFrame: cell.label.frame)
+            let badge = cell.badge.alignmentRect(forFrame: cell.badge.frame)
+            if section {
+                XCTAssertEqual(title.minX, 4, accuracy: 0.5)
+                XCTAssertEqual(badge.minX - title.maxX, 8, accuracy: 0.5)
+            } else {
+                XCTAssertEqual(title.minX, 25, accuracy: 0.5)
+                XCTAssertEqual(badge.maxX, cell.bounds.width - 10, accuracy: 0.5)
+                XCTAssertEqual(cell.badge.alignment, .right)
+            }
+        }
+    }
+
+    func testExpandedLongPathsTrackViewportAcrossRepeatedResizes() throws {
+        let tree = FileTree()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 500), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = tree
+        defer { withExtendedLifetime(window) {} }
+        let paths = (0..<30).map { "Resources/Brand/Lightsaber/very-long-app-icon-preview-name-\($0).png" }
+        let root = URL(fileURLWithPath: "/tmp/sidebar-resize")
+        let changes = paths.map { GitChange(path: $0, kind: .modified, comparison: .unstaged) }
+        let state = WorkspaceState(root: root, files: paths, git: GitStatus(root: root, branch: "main", files: paths, changes: changes, hasHead: true))
+        tree.show(state, changesOnly: true)
+        let scroll = try XCTUnwrap(tree.outline.enclosingScrollView)
+        // Include a persistent scroller, so the available width is smaller than the sidebar.
+        scroll.scrollerStyle = .legacy
+        scroll.autohidesScrollers = false
+        var measured: [CGFloat: CGFloat] = [:]
+        for width: CGFloat in [360, 208, 280, 208, 360] {
+            window.setContentSize(NSSize(width: width, height: 500))
+            tree.layoutSubtreeIfNeeded()
+            tree.outline.layoutSubtreeIfNeeded()
+            let column = try XCTUnwrap(tree.outline.outlineTableColumn)
+            XCTAssertEqual(column.width, scroll.contentView.bounds.width, accuracy: 1)
+            XCTAssertEqual(tree.outline.bounds.width, scroll.contentView.bounds.width, accuracy: 1)
+            let row = try XCTUnwrap((0..<tree.outline.numberOfRows).first { (tree.outline.item(atRow: $0) as? FileNode)?.path == paths[0] })
+            let cell = try XCTUnwrap(tree.outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? FileCell)
+            cell.layoutSubtreeIfNeeded()
+            XCTAssertGreaterThan(cell.label.frame.width, 0)
+            let badgeAlignment = cell.badge.alignmentRect(forFrame: cell.badge.frame)
+            let labelAlignment = cell.label.alignmentRect(forFrame: cell.label.frame)
+            XCTAssertLessThanOrEqual(cell.badge.frame.maxX, cell.bounds.width)
+            XCTAssertLessThanOrEqual(badgeAlignment.maxX, cell.bounds.width - 9.5)
+            XCTAssertLessThanOrEqual(labelAlignment.maxX, badgeAlignment.minX - 6.5)
+            XCTAssertEqual(cell.icon.frame.width, 16, accuracy: 0.5)
+            if let previous = measured[width] { XCTAssertEqual(cell.label.frame.width, previous, accuracy: 1, "Returning to a width must restore the same text area") }
+            measured[width] = cell.label.frame.width
+            tree.outline.collapseItem(tree.outline.item(atRow: 1))
+            tree.outline.expandItem(nil, expandChildren: true)
+        }
+        XCTAssertGreaterThan(try XCTUnwrap(measured[360]), try XCTUnwrap(measured[208]) + 140)
+    }
+
     func testIndexOnlyReturnsImmediateChildrenWithNaturalDirectoryOrder() {
         let index = FileTreeIndex(paths: ["src/module10/main.ts", "src/module2/你好.ts", "src/a.ts", "src-old/file.ts", "README.md"])
         XCTAssertEqual(index.children(in: "").map(\.path), ["src", "src-old", "README.md"])

@@ -59,6 +59,8 @@ final class WorkspaceNavigation: NSView {
         super.init(frame: frameRect)
         files.toolTip = "All files (⌘1)"
         changes.toolTip = "Changes (⌘2)"
+        // Both fixed titles must fit even at the sidebar's minimum width.
+        for button in [files, changes] { button.horizontalPadding = 8 }
         add(files, changes)
         NSLayoutConstraint.activate([
             files.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.Layout.controlGap), files.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Layout.controlGap), files.bottomAnchor.constraint(equalTo: bottomAnchor),

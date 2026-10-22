@@ -23,14 +23,41 @@ final class FileCell: NSTableCellView {
     let icon = NSImageView()
     let label = Theme.label("", size: 13)
     let badge = Theme.label("", size: 10, weight: .semibold)
+    private var iconWidth: NSLayoutConstraint!
+    private var labelGap: NSLayoutConstraint!
+    private var titleTrailing: NSLayoutConstraint!
+    private var badgeTrailing: NSLayoutConstraint!
+    private var sectionBadgeTrailing: NSLayoutConstraint!
+    var isSection = false {
+        didSet {
+            guard oldValue != isSection else { return }
+            icon.isHidden = isSection
+            iconWidth.constant = isSection ? 0 : 16
+            labelGap.constant = isSection ? 2 : 7
+            titleTrailing.constant = isSection ? -8 : -7
+            badgeTrailing.isActive = !isSection
+            sectionBadgeTrailing.isActive = isSection
+            badge.alignment = isSection ? .left : .right
+            label.setContentHuggingPriority(isSection ? .defaultHigh : .defaultLow, for: .horizontal)
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        badge.setContentCompressionResistancePriority(.required, for: .horizontal)
+        badge.setContentHuggingPriority(NSLayoutConstraint.Priority(751), for: .horizontal)
+        badge.alignment = .right
         add(icon, label, badge)
+        iconWidth = icon.widthAnchor.constraint(equalToConstant: 16)
+        labelGap = label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7)
+        titleTrailing = label.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -7)
+        badgeTrailing = badge.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10)
+        sectionBadgeTrailing = badge.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10)
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2), icon.centerYAnchor.constraint(equalTo: centerYAnchor), icon.widthAnchor.constraint(equalToConstant: 16), icon.heightAnchor.constraint(equalToConstant: 16),
-            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7), label.centerYAnchor.constraint(equalTo: centerYAnchor), label.trailingAnchor.constraint(lessThanOrEqualTo: badge.leadingAnchor, constant: -7),
-            badge.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10), badge.centerYAnchor.constraint(equalTo: centerYAnchor), badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 20)
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2), icon.centerYAnchor.constraint(equalTo: centerYAnchor), iconWidth, icon.heightAnchor.constraint(equalToConstant: 16),
+            labelGap, label.centerYAnchor.constraint(equalTo: centerYAnchor), titleTrailing,
+            badgeTrailing, badge.centerYAnchor.constraint(equalTo: centerYAnchor), badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 20)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -69,7 +96,11 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         outline.selectionHighlightStyle = .regular
         outline.floatsGroupRows = false
         outline.allowsEmptySelection = true
+        // Expansion must not grow the document beyond the visible sidebar.
+        outline.autoresizesOutlineColumn = false
+        outline.autoresizingMask = [.width]
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("files"))
+        column.resizingMask = .autoresizingMask
         outline.addTableColumn(column)
         outline.outlineTableColumn = column
         outline.dataSource = self
@@ -86,6 +117,9 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         let scroll = NSScrollView()
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = false
+        // Keep the scrollbar in its own gutter instead of covering row content.
+        scroll.scrollerStyle = .legacy
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         scroll.backgroundColor = .clear
@@ -260,7 +294,7 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         let color = kind == .added || kind == .untracked ? Theme.green : kind == .deleted ? Theme.red : Theme.accent
         cell.label.font = .systemFont(ofSize: node.isSection ? 11 : 13, weight: node.isSection ? .semibold : .regular)
         cell.label.textColor = node.isSection ? Theme.muted : Theme.text
-        cell.icon.isHidden = node.isSection
+        cell.isSection = node.isSection
         cell.badge.stringValue = node.isSection ? "\(sectionCounts[node.comparison ?? .unstaged] ?? 0)" : kind?.rawValue ?? ""
         cell.badge.textColor = color
         return cell
