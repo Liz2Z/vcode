@@ -1,6 +1,6 @@
 import Foundation
 
-// A composed read model. Git remains the source of truth for all repository state.
+// A composed read model: disk supplies browsing paths; Git supplies repository state.
 struct WorkspaceState {
     let root: URL
     let files: [String]

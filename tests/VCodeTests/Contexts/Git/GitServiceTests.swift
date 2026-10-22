@@ -95,6 +95,67 @@ final class GitServiceTests: XCTestCase {
         XCTAssertEqual(String(decoding: data, as: UTF8.self), "staged\n")
     }
 
+    func testIgnoreRulesFilterDiskCandidatesAndPreserveTrackedExceptions() throws {
+        let ignored = "hidden/[special]: 中文\tfile\n.ts"
+        let tracked = "hidden/tracked.ts"
+        try write(".gitignore", "hidden/\n")
+        try write(ignored, "ignored\n")
+        try write(tracked, "tracked despite ignore rule\n")
+        try write("src/visible.ts", "visible\n")
+        try git(["add", "-f", "--", tracked])
+        let service = GitService(root: folder)
+        XCTAssertEqual(try service.ignoredPaths(), [ignored])
+        let state = try WorkspaceReader(folder: folder).load()
+        XCTAssertEqual(Set(state.files), [".gitignore", tracked, "src/visible.ts"])
+    }
+
+    func testStatusIncludesBranchMetadataForInitialUnicodeAndDetachedStates() throws {
+        let service = GitService(root: folder)
+        let initial = try XCTUnwrap(service.status())
+        XCTAssertFalse(initial.hasHead)
+        XCTAssertEqual(initial.branch, "main")
+        try write("file.ts", "first\n")
+        try git(["add", "."]); try git(["commit", "-qm", "initial"])
+        try git(["switch", "-qc", "feature/中文"])
+        XCTAssertEqual(try service.status()?.branch, "feature/中文")
+        try git(["switch", "-q", "--detach"])
+        let detached = try XCTUnwrap(service.status())
+        XCTAssertTrue(detached.hasHead)
+        XCTAssertTrue(detached.branch.allSatisfy { $0.isHexDigit })
+        XCTAssertGreaterThanOrEqual(detached.branch.count, 4)
+    }
+
+    func testObjectLookupPreservesSizeLimitsEmptyAndMissingFiles() throws {
+        try write("large\nfile.ts", "123456789\n")
+        try write("empty.ts", "")
+        try git(["add", "."]); try git(["commit", "-qm", "initial"])
+        let service = GitService(root: folder)
+        for revision in [GitRevision.head, .index] {
+            XCTAssertThrowsError(try service.content(at: revision, path: "large\nfile.ts", maximumByteCount: 3))
+            XCTAssertEqual(try service.content(at: revision, path: "large\nfile.ts", maximumByteCount: 20), Data("123456789\n".utf8))
+            XCTAssertEqual(try service.content(at: revision, path: "empty.ts", maximumByteCount: 3), Data())
+            XCTAssertEqual(try service.content(at: revision, path: "missing\nfile.ts", maximumByteCount: 3), Data())
+        }
+    }
+
+    func testUnmergedStatusRemainsAConflictWithNoStageZeroContent() throws {
+        try write("conflict.ts", "initial\n")
+        try git(["add", "."]); try git(["commit", "-qm", "initial"])
+        try git(["switch", "-qc", "feature"])
+        try write("conflict.ts", "feature\n"); try git(["commit", "-qam", "feature"])
+        try git(["switch", "-q", "main"])
+        try write("conflict.ts", "main\n"); try git(["commit", "-qam", "main"])
+        XCTAssertThrowsError(try git(["merge", "--no-edit", "feature"]))
+        let service = GitService(root: folder)
+        let status = try XCTUnwrap(service.status())
+        XCTAssertEqual(status.branch, "main")
+        XCTAssertEqual(status.changes, [GitChange(path: "conflict.ts", kind: .conflict, comparison: .unstaged)])
+        XCTAssertEqual(try service.content(at: .index, path: "conflict.ts", maximumByteCount: 1024), Data())
+        let reader = try WorkspaceReader(folder: folder)
+        let snapshot = try reader.snapshot(path: "conflict.ts", state: reader.load(), compare: true, comparison: .unstaged)
+        XCTAssertTrue(snapshot.message?.contains("Unmerged") == true)
+    }
+
     private func write(_ path: String, _ text: String) throws {
         let url = folder.appendingPathComponent(path)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

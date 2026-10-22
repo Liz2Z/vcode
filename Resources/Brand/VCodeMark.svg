@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="592" height="512" viewBox="216 260 592 512" role="img" aria-labelledby="title"><title id="title">VCode — Folded Ribbon V</title><g id="mark">
+    <!-- The right ribbon is underneath. Both strips share the bottom fold. -->
+    <path fill="#B7B9B7" d="M640 280H788L586 752H438Z"/>
+    <!-- The uninterrupted left ribbon covers the overlap at the bottom. -->
+    <path fill="#E7E7E5" d="M236 280H384L586 752H438Z"/>
+  </g></svg>

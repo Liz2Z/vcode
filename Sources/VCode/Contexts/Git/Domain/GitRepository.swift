@@ -6,6 +6,7 @@ protocol GitRepository {
     func repositoryRoot() -> URL?
     func projectIdentity() throws -> GitProject
     func status() throws -> GitStatus?
+    func ignoredPaths() throws -> Set<String>
     func destinations() throws -> GitDestinations
     func switchBranch(_ name: String) throws
     func validatedWorktreeRoot(_ root: URL) throws -> URL

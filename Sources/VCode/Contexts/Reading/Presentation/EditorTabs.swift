@@ -51,9 +51,7 @@ final class EditorTabs: NSView {
             title.font = .systemFont(ofSize: 13, weight: active ? .medium : .regular)
             title.contentTintColor = active ? Theme.accent : Theme.muted
             title.setAccessibilityValue(active ? 1 : 0)
-            title.image = NSImage(systemSymbolName: ["ts", "tsx"].contains((path as NSString).pathExtension) ? "curlybraces" : "doc.text", accessibilityDescription: nil)
-            title.imagePosition = .imageLeading
-            title.imageHugsTitle = true
+            title.imagePosition = .noImage
             title.toolTip = path + (document.comparison.map { " · " + $0.rawValue } ?? " · Source")
             let close = Theme.button("xmark", tooltip: "Close tab", target: self, action: #selector(closeTab(_:)))
             close.feedbackRadius = 4

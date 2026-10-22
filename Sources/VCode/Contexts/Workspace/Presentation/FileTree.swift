@@ -20,20 +20,14 @@ final class FileNode: NSObject {
 }
 
 final class FileCell: NSTableCellView {
-    let icon = NSImageView()
     let label = Theme.label("", size: 13)
     let badge = Theme.label("", size: 10, weight: .semibold)
-    private var iconWidth: NSLayoutConstraint!
-    private var labelGap: NSLayoutConstraint!
     private var titleTrailing: NSLayoutConstraint!
     private var badgeTrailing: NSLayoutConstraint!
     private var sectionBadgeTrailing: NSLayoutConstraint!
     var isSection = false {
         didSet {
             guard oldValue != isSection else { return }
-            icon.isHidden = isSection
-            iconWidth.constant = isSection ? 0 : 16
-            labelGap.constant = isSection ? 2 : 7
             titleTrailing.constant = isSection ? -8 : -7
             badgeTrailing.isActive = !isSection
             sectionBadgeTrailing.isActive = isSection
@@ -48,15 +42,12 @@ final class FileCell: NSTableCellView {
         badge.setContentCompressionResistancePriority(.required, for: .horizontal)
         badge.setContentHuggingPriority(NSLayoutConstraint.Priority(751), for: .horizontal)
         badge.alignment = .right
-        add(icon, label, badge)
-        iconWidth = icon.widthAnchor.constraint(equalToConstant: 16)
-        labelGap = label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7)
+        add(label, badge)
         titleTrailing = label.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -7)
         badgeTrailing = badge.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10)
         sectionBadgeTrailing = badge.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10)
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2), icon.centerYAnchor.constraint(equalTo: centerYAnchor), iconWidth, icon.heightAnchor.constraint(equalToConstant: 16),
-            labelGap, label.centerYAnchor.constraint(equalTo: centerYAnchor), titleTrailing,
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4), label.centerYAnchor.constraint(equalTo: centerYAnchor), titleTrailing,
             badgeTrailing, badge.centerYAnchor.constraint(equalTo: centerYAnchor), badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 20)
         ])
     }
@@ -286,10 +277,6 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         cell.identifier = id
         cell.label.stringValue = node.name
         cell.toolTip = node.path
-        let ext = (node.name as NSString).pathExtension
-        let isTS = ["ts", "tsx", "mts", "cts"].contains(ext)
-        cell.icon.image = NSImage(systemSymbolName: node.directory ? "folder" : isTS ? "curlybraces" : "doc.text", accessibilityDescription: nil)
-        cell.icon.contentTintColor = node.directory ? Theme.muted : isTS ? Theme.accent : Theme.muted
         let kind = node.change?.kind
         let color = kind == .added || kind == .untracked ? Theme.green : kind == .deleted ? Theme.red : Theme.accent
         cell.label.font = .systemFont(ofSize: node.isSection ? 11 : 13, weight: node.isSection ? .semibold : .regular)

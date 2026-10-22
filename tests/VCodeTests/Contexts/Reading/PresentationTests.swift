@@ -59,7 +59,7 @@ final class PresentationTests: XCTestCase {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 580), styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = workspace
         defer { withExtendedLifetime(window) {} }
-        workspace.header.show(WorkspaceState(root: URL(fileURLWithPath: "/tmp/a-very-long-project-name"), files: [], git: GitStatus(root: URL(fileURLWithPath: "/tmp/a-very-long-project-name"), branch: "feature/a-very-long-branch-name", files: [], changes: [], hasHead: true)))
+        workspace.header.show(WorkspaceState(root: URL(fileURLWithPath: "/tmp/a-very-long-project-name"), files: [], git: GitStatus(root: URL(fileURLWithPath: "/tmp/a-very-long-project-name"), branch: "feature/a-very-long-branch-name", changes: [], hasHead: true)))
         workspace.editor.prepare(path: "src/a-very-long-folder/a-very-long-file-name.ts", diff: true, isGit: true)
         for size in [NSSize(width: 920, height: 580), NSSize(width: 1360, height: 860)] {
             window.setContentSize(size)

@@ -27,7 +27,6 @@ struct GitChange: Equatable {
 struct GitStatus {
     let root: URL
     let branch: String
-    let files: [String]
     let changes: [GitChange]
     let hasHead: Bool
 }

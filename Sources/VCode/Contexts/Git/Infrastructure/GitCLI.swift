@@ -11,16 +11,41 @@ final class GitCLI: GitRepository {
     }
 
     func status() throws -> GitStatus? {
-        guard (try? read(["rev-parse", "--is-inside-work-tree"])) != nil else { return nil }
-        let hasHead = (try? read(["rev-parse", "--verify", "HEAD"])) != nil
-        let branchData = (try? read(["symbolic-ref", "--quiet", "--short", "HEAD"]))
-            ?? (try? read(["rev-parse", "--short", "HEAD"])) ?? Data()
-        let branch = String(decoding: branchData, as: UTF8.self).trimmingCharacters(in: .newlines)
-        let fileData = try read(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
-        var files = Set(Self.paths(fileData))
-        let changes = Self.changes(try read(["status", "--porcelain=v1", "-z", "--untracked-files=all"]))
-        for change in changes { files.insert(change.path) }
-        return GitStatus(root: root, branch: branch, files: files.sorted(), changes: changes, hasHead: hasHead)
+        let data = try run(arguments: ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], allowedExitCodes: [0, 128])
+        let fields = Self.paths(data)
+        guard let oid = fields.first(where: { $0.hasPrefix("# branch.oid ") }) else { return nil }
+        let hasHead = !oid.hasSuffix("(initial)")
+        let head = fields.first(where: { $0.hasPrefix("# branch.head ") }).map { String($0.dropFirst(14)) } ?? ""
+        let branch: String
+        if head == "(detached)" {
+            branch = String(decoding: try read(["rev-parse", "--short", "HEAD"]), as: UTF8.self).trimmingCharacters(in: .newlines)
+        } else { branch = head }
+        // Reuse the comparison mapper after decoding v2's fixed metadata fields.
+        var records: [String] = []
+        var index = 0
+        while index < fields.count {
+            let entry = fields[index]
+            index += 1
+            if entry.hasPrefix("? ") { records.append("?? " + entry.dropFirst(2)); continue }
+            let kind = entry.first
+            let count = kind == "1" ? 8 : kind == "2" ? 9 : kind == "u" ? 10 : 0
+            guard count > 0 else { continue }
+            let values = entry.split(separator: " ", maxSplits: count, omittingEmptySubsequences: false)
+            guard values.count == count + 1 else { throw GitError.command("Git returned an invalid status record.") }
+            records.append(values[1].replacingOccurrences(of: ".", with: " ") + " " + values[count])
+            if kind == "2" {
+                guard index < fields.count else { throw GitError.command("Git returned an incomplete rename record.") }
+                records.append(fields[index]); index += 1
+            }
+        }
+        return GitStatus(root: root, branch: branch, changes: Self.changes(Data((records.joined(separator: "\0") + "\0").utf8)), hasHead: hasHead)
+    }
+
+    func ignoredPaths() throws -> Set<String> {
+        // Let Git collapse ignored, untracked directories before disk traversal.
+        // Directories containing tracked exceptions are not collapsed away.
+        let output = try read(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"])
+        return Set(Self.paths(output))
     }
 
     func projectIdentity() throws -> GitProject {
@@ -66,16 +91,17 @@ final class GitCLI: GitRepository {
         let object: String
         switch revision {
         case .head:
-            guard !(try read(["ls-tree", "-z", "HEAD", "--", path])).isEmpty else { return Data() }
             object = "HEAD:" + path
         case .index:
-            let entries = Self.paths(try read(["ls-files", "--stage", "-z", "--", path]))
-            guard entries.contains(where: { $0.split(separator: "\t", maxSplits: 1).first?.hasSuffix(" 0") == true }) else { return Data() }
             object = ":0:" + path
         }
-        let sizeData = try read(["cat-file", "-s", object])
+        // Batch-check returns size or "missing" in one invocation, preserving
+        // NUL-delimited input for paths containing line breaks.
+        let sizeData = try run(arguments: ["--no-optional-locks", "cat-file", "--batch-check=%(objectsize)", "-z"], input: Data((object + "\0").utf8))
         let sizeText = String(decoding: sizeData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        if let size = Int(sizeText), size > maximumByteCount { throw GitError.contentTooLarge }
+        if sizeText.hasSuffix(" missing") { return Data() }
+        guard let size = Int(sizeText) else { throw GitError.command("Git returned an invalid object size.") }
+        if size > maximumByteCount { throw GitError.contentTooLarge }
         let data = try read(["show", object])
         if data.count > maximumByteCount { throw GitError.contentTooLarge }
         return data
@@ -161,12 +187,24 @@ final class GitCLI: GitRepository {
         return String(decoding: data, as: UTF8.self)
     }
 
-    private func run(arguments: [String], allowedExitCodes: Set<Int32> = [0]) throws -> Data {
+    private func run(arguments: [String], allowedExitCodes: Set<Int32> = [0], input: Data? = nil) throws -> Data {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = arguments
         process.currentDirectoryURL = root
         process.standardInput = FileHandle.nullDevice
+        // A file avoids blocking on a full stdin pipe while Git writes stdout.
+        let inputFile = input.map { _ in FileManager.default.temporaryDirectory.appendingPathComponent("vcode-stdin-" + UUID().uuidString) }
+        var inputHandle: FileHandle?
+        defer {
+            try? inputHandle?.close()
+            if let inputFile { try? FileManager.default.removeItem(at: inputFile) }
+        }
+        if let input, let inputFile {
+            try input.write(to: inputFile)
+            inputHandle = try FileHandle(forReadingFrom: inputFile)
+            process.standardInput = inputHandle
+        }
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
         process.environment = environment
@@ -177,11 +215,15 @@ final class GitCLI: GitRepository {
         defer { try? errorHandle.close(); try? FileManager.default.removeItem(at: errorFile) }
         process.standardOutput = output
         process.standardError = errorHandle
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in finished.signal() }
         try process.run()
-        let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        let timeout = DispatchWorkItem { [weak process] in if let process, process.isRunning { process.terminate() } }
         DispatchQueue.global().asyncAfter(deadline: .now() + 20, execute: timeout)
         let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        // waitUntilExit polls the run loop and adds ~70 ms after stdout closes
+        // on this macOS version. The termination handler signals immediately.
+        finished.wait()
         timeout.cancel()
         guard allowedExitCodes.contains(process.terminationStatus) else {
             let message = (try? String(contentsOf: errorFile, encoding: .utf8)) ?? "Git could not read this repository."

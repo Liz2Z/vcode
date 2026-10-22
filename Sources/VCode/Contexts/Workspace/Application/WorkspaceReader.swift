@@ -5,6 +5,7 @@ final class WorkspaceReader {
     let git: GitService
     let files: FileBrowser
     private let project: GitProject?
+    private var lastComparison: FileSnapshot?
     var root: URL { files.root }
 
     init(folder: URL) throws {
@@ -17,7 +18,8 @@ final class WorkspaceReader {
 
     func load() throws -> WorkspaceState {
         let status = try git.status()
-        return WorkspaceState(root: root, files: try status?.files ?? files.list(), git: status, project: project)
+        let ignored = status == nil ? Set<String>() : try git.ignoredPaths()
+        return WorkspaceState(root: root, files: try files.list(excluding: ignored), git: status, project: project)
     }
 
     func snapshot(path: String, state: WorkspaceState, compare: Bool, comparison: GitComparison = .workingTree) throws -> FileSnapshot {
@@ -48,8 +50,13 @@ final class WorkspaceReader {
         let before = String(decoding: original.data, as: UTF8.self)
         let after = String(decoding: content.data, as: UTF8.self)
         guard compare else { return FileSnapshot(path: path, before: "", after: after, rows: [], message: nil, isBinary: false) }
+        if let cached = lastComparison, cached.path == path, cached.comparison == scope, cached.before == before, cached.after == after { return cached }
         let patch = try git.patch(before: original.data, after: content.data)
         let rows = try Diff.align(before: before, after: after, patch: patch)
-        return FileSnapshot(path: path, before: before, after: after, rows: rows, message: nil, isBinary: false, comparison: scope)
+        let snapshot = FileSnapshot(path: path, before: before, after: after, rows: rows, message: nil, isBinary: false, comparison: scope)
+        // One bounded entry prevents unchanged refreshes from launching git diff
+        // again. Actual content is always re-read, so no timestamp assumptions.
+        lastComparison = original.data.count + content.data.count <= 1_048_576 ? snapshot : nil
+        return snapshot
     }
 }

@@ -10,7 +10,7 @@ final class WorkspaceHistoryTests: XCTestCase {
     }
     private func state(_ path: String, branch: String = "main", project: GitProject? = nil) -> WorkspaceState {
         let root = URL(fileURLWithPath: path, isDirectory: true)
-        return WorkspaceState(root: root, files: [], git: project.map { _ in GitStatus(root: root, branch: branch, files: [], changes: [], hasHead: true) }, project: project)
+        return WorkspaceState(root: root, files: [], git: project.map { _ in GitStatus(root: root, branch: branch, changes: [], hasHead: true) }, project: project)
     }
 
     func testPersistenceDeduplicationRefreshAndLimit() {

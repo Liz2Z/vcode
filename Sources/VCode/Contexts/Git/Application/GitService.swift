@@ -10,6 +10,7 @@ final class GitService {
     func repositoryRoot() -> URL? { repository.repositoryRoot() }
     func projectIdentity() throws -> GitProject { try repository.projectIdentity() }
     func status() throws -> GitStatus? { try repository.status() }
+    func ignoredPaths() throws -> Set<String> { try repository.ignoredPaths() }
     func destinations() throws -> GitDestinations { try repository.destinations() }
     func headContent(path: String, maximumByteCount: Int) throws -> Data {
         try repository.content(at: .head, path: path, maximumByteCount: maximumByteCount)

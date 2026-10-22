@@ -13,7 +13,7 @@ final class FileTreeTests: XCTestCase {
         let root = URL(fileURLWithPath: "/tmp/group-count-layout")
         let paths = (0..<137).map { "docs/api-\($0).md" }
         let changes = paths.map { GitChange(path: $0, kind: .modified, comparison: .unstaged) }
-        tree.show(WorkspaceState(root: root, files: paths, git: GitStatus(root: root, branch: "main", files: paths, changes: changes, hasHead: true)), changesOnly: true)
+        tree.show(WorkspaceState(root: root, files: paths, git: GitStatus(root: root, branch: "main", changes: changes, hasHead: true)), changesOnly: true)
         let scroll = try XCTUnwrap(tree.outline.enclosingScrollView)
         XCTAssertEqual(scroll.scrollerStyle, .legacy, "Scrollbar must reserve space rather than cover row contents")
         let section = try XCTUnwrap(tree.outline.item(atRow: 1) as? FileNode)
@@ -27,8 +27,7 @@ final class FileTreeTests: XCTestCase {
                 for row in [0, 1] {
                     let cell = try XCTUnwrap(tree.outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? FileCell)
                     cell.layoutSubtreeIfNeeded()
-                    XCTAssertTrue(cell.icon.isHidden)
-                    XCTAssertEqual(cell.icon.frame.width, 0, accuracy: 0.5)
+                    XCTAssertTrue(cell.subviews.compactMap { $0 as? NSImageView }.isEmpty)
                     let title = cell.label.alignmentRect(forFrame: cell.label.frame)
                     let badge = cell.badge.alignmentRect(forFrame: cell.badge.frame)
                     XCTAssertEqual(title.minX, 4, accuracy: 0.5, "Hidden folder icon must leave no empty icon slot")
@@ -46,7 +45,7 @@ final class FileTreeTests: XCTestCase {
         }
     }
 
-    func testReusingSectionCellForFileRestoresIconAndTrailingStatus() throws {
+    func testReusingSectionCellForFileKeepsIconCollapsedAndTrailingStatus() throws {
         let cell = FileCell()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 30), styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = cell
@@ -56,15 +55,14 @@ final class FileTreeTests: XCTestCase {
             cell.isSection = section
             cell.badge.stringValue = section ? "9" : "M"
             cell.layoutSubtreeIfNeeded()
-            XCTAssertEqual(cell.icon.isHidden, section)
-            XCTAssertEqual(cell.icon.frame.width, section ? 0 : 16, accuracy: 0.5)
+            XCTAssertTrue(cell.subviews.compactMap { $0 as? NSImageView }.isEmpty)
             let title = cell.label.alignmentRect(forFrame: cell.label.frame)
             let badge = cell.badge.alignmentRect(forFrame: cell.badge.frame)
             if section {
                 XCTAssertEqual(title.minX, 4, accuracy: 0.5)
                 XCTAssertEqual(badge.minX - title.maxX, 8, accuracy: 0.5)
             } else {
-                XCTAssertEqual(title.minX, 25, accuracy: 0.5)
+                XCTAssertEqual(title.minX, 4, accuracy: 0.5)
                 XCTAssertEqual(badge.maxX, cell.bounds.width - 10, accuracy: 0.5)
                 XCTAssertEqual(cell.badge.alignment, .right)
             }
@@ -79,7 +77,7 @@ final class FileTreeTests: XCTestCase {
         let paths = (0..<30).map { "Resources/Brand/Lightsaber/very-long-app-icon-preview-name-\($0).png" }
         let root = URL(fileURLWithPath: "/tmp/sidebar-resize")
         let changes = paths.map { GitChange(path: $0, kind: .modified, comparison: .unstaged) }
-        let state = WorkspaceState(root: root, files: paths, git: GitStatus(root: root, branch: "main", files: paths, changes: changes, hasHead: true))
+        let state = WorkspaceState(root: root, files: paths, git: GitStatus(root: root, branch: "main", changes: changes, hasHead: true))
         tree.show(state, changesOnly: true)
         let scroll = try XCTUnwrap(tree.outline.enclosingScrollView)
         // Include a persistent scroller, so the available width is smaller than the sidebar.
@@ -102,7 +100,7 @@ final class FileTreeTests: XCTestCase {
             XCTAssertLessThanOrEqual(cell.badge.frame.maxX, cell.bounds.width)
             XCTAssertLessThanOrEqual(badgeAlignment.maxX, cell.bounds.width - 9.5)
             XCTAssertLessThanOrEqual(labelAlignment.maxX, badgeAlignment.minX - 6.5)
-            XCTAssertEqual(cell.icon.frame.width, 16, accuracy: 0.5)
+            XCTAssertTrue(cell.subviews.compactMap { $0 as? NSImageView }.isEmpty)
             if let previous = measured[width] { XCTAssertEqual(cell.label.frame.width, previous, accuracy: 1, "Returning to a width must restore the same text area") }
             measured[width] = cell.label.frame.width
             tree.outline.collapseItem(tree.outline.item(atRow: 1))
@@ -122,7 +120,7 @@ final class FileTreeTests: XCTestCase {
     func testFiftyThousandFilesStayCollapsedAndOnlyExpandedNodesMaterialize() throws {
         let tree = FileTree()
         let paths = (0..<100).flatMap { directory in (0..<500).map { "src/module\(directory)/file\($0).ts" } }
-        let state = WorkspaceState(root: URL(fileURLWithPath: "/tmp/lazy-tree"), files: paths, git: GitStatus(root: URL(fileURLWithPath: "/tmp/lazy-tree"), branch: "main", files: paths, changes: [], hasHead: true))
+        let state = WorkspaceState(root: URL(fileURLWithPath: "/tmp/lazy-tree"), files: paths, git: GitStatus(root: URL(fileURLWithPath: "/tmp/lazy-tree"), branch: "main", changes: [], hasHead: true))
         tree.show(state, changesOnly: false)
         XCTAssertEqual(tree.outline.numberOfRows, 1)
         XCTAssertEqual(tree.loadedNodeCount, 1)
@@ -139,7 +137,7 @@ final class FileTreeTests: XCTestCase {
         tree.show(state, changesOnly: false)
         XCTAssertTrue(tree.outline.item(atRow: 0) as? FileNode === src, "An unchanged refresh must keep the existing tree")
         tree.outline.collapseItem(src)
-        let refreshed = WorkspaceState(root: state.root, files: paths + ["src/new/added.ts"], git: GitStatus(root: state.root, branch: state.branch, files: paths + ["src/new/added.ts"], changes: [], hasHead: true))
+        let refreshed = WorkspaceState(root: state.root, files: paths + ["src/new/added.ts"], git: GitStatus(root: state.root, branch: state.branch, changes: [], hasHead: true))
         tree.show(refreshed, changesOnly: false)
         XCTAssertEqual(tree.outline.numberOfRows, 1)
         XCTAssertEqual(tree.loadedNodeCount, 1, "A refresh must not materialize descendants of a collapsed parent")
@@ -150,7 +148,7 @@ final class FileTreeTests: XCTestCase {
 
     func testChangesStartExpandedAndSearchOnlyMaterializesMatchingPaths() throws {
         let tree = FileTree()
-        let state = WorkspaceState(root: URL(fileURLWithPath: "/tmp/changes-tree"), files: ["src/lib/target.ts", "src/other/ignored.ts"], git: GitStatus(root: URL(fileURLWithPath: "/tmp/changes-tree"), branch: "main", files: ["src/lib/target.ts", "src/other/ignored.ts"], changes: [GitChange(path: "src/lib/target.ts", kind: .modified), GitChange(path: "src/other/ignored.ts", kind: .added)], hasHead: true))
+        let state = WorkspaceState(root: URL(fileURLWithPath: "/tmp/changes-tree"), files: ["src/lib/target.ts", "src/other/ignored.ts"], git: GitStatus(root: URL(fileURLWithPath: "/tmp/changes-tree"), branch: "main", changes: [GitChange(path: "src/lib/target.ts", kind: .modified), GitChange(path: "src/other/ignored.ts", kind: .added)], hasHead: true))
         tree.show(state, changesOnly: true)
         XCTAssertEqual(tree.outline.numberOfRows, 7)
         XCTAssertEqual(tree.loadedNodeCount, 7)
@@ -167,7 +165,7 @@ final class FileTreeTests: XCTestCase {
         let root = URL(fileURLWithPath: "/tmp/scoped-changes")
         let path = "src/lib/shared.ts"
         let changes = [GitChange(path: path, kind: .modified, comparison: .staged), GitChange(path: path, kind: .modified, comparison: .unstaged)]
-        let status = GitStatus(root: root, branch: "main", files: [path], changes: changes, hasHead: true)
+        let status = GitStatus(root: root, branch: "main", changes: changes, hasHead: true)
         tree.show(WorkspaceState(root: root, files: [path], git: status), changesOnly: true)
         XCTAssertEqual(tree.outline.numberOfRows, 8)
         let nodes = (0..<8).compactMap { tree.outline.item(atRow: $0) as? FileNode }
@@ -184,11 +182,78 @@ final class FileTreeTests: XCTestCase {
         let staged = try XCTUnwrap(nodes.first { $0.isSection && $0.comparison == .staged })
         tree.outline.collapseItem(staged)
         let extra = GitChange(path: "other/file.ts", kind: .untracked, comparison: .unstaged)
-        let next = GitStatus(root: root, branch: "main", files: [path, extra.path], changes: changes + [extra], hasHead: true)
-        tree.show(WorkspaceState(root: root, files: next.files, git: next), changesOnly: true)
+        let next = GitStatus(root: root, branch: "main", changes: changes + [extra], hasHead: true)
+        tree.show(WorkspaceState(root: root, files: [path, extra.path], git: next), changesOnly: true)
         let refreshedStaged = try XCTUnwrap(tree.outline.item(atRow: 0) as? FileNode)
         XCTAssertFalse(tree.outline.isItemExpanded(refreshedStaged))
         XCTAssertTrue((0..<tree.outline.numberOfRows).compactMap { tree.outline.item(atRow: $0) as? FileNode }.contains { $0.path == extra.path })
+    }
+
+    func testFilteredFilesActivateOnceAfterChangesRoundTripAndRefreshWithoutResizing() throws {
+        let tree = FileTree()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 650), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = tree
+        defer { withExtendedLifetime(window) {} }
+        let paths = ["src/auth/request.ts", "src/account/uic-request.ts", "src/xiaolv/request.ts"]
+        let changes = (paths + ["src/other/ignored.ts"]).flatMap { path in [GitChange(path: path, kind: .modified, comparison: .staged), GitChange(path: path, kind: .modified, comparison: .unstaged)] }
+        let root = URL(fileURLWithPath: "/tmp/filtered-clicks")
+        let state = WorkspaceState(root: root, files: paths + ["src/other/ignored.ts"], git: GitStatus(root: root, branch: "main", changes: changes, hasHead: true))
+        tree.show(state, changesOnly: true)
+        tree.filter.stringValue = "request.ts"
+        _ = tree.filter.sendAction(tree.filter.action, to: tree.filter.target)
+        wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in tree.count.stringValue == "6" }, object: nil)], timeout: 2)
+        var activated: [(String, GitComparison?)] = []
+        tree.onSelect = { activated.append(($0, $1)) }
+        for changesOnly in [false, true, false] {
+            tree.show(state, changesOnly: changesOnly)
+            tree.layoutSubtreeIfNeeded()
+            for path in paths + [paths[0], paths[0]] {
+                let scope: GitComparison? = changesOnly ? .unstaged : nil
+                let row = try XCTUnwrap((0..<tree.outline.numberOfRows).first { row in
+                    guard let node = tree.outline.item(atRow: row) as? FileNode else { return false }
+                    return node.path == path && node.comparison == scope
+                })
+                let point = tree.outline.convert(NSPoint(x: 130, y: tree.outline.rect(ofRow: row).midY), to: nil)
+                let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0.1, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+                let previous = activated.count
+                // Also bounds the old native tracking loop if this behavior regresses.
+                NSApp.postEvent(up, atStart: true)
+                tree.outline.mouseDown(with: down)
+                _ = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true)
+                tree.outline.mouseUp(with: up)
+                XCTAssertEqual(tree.outline.selectedRow, row)
+                XCTAssertEqual(activated.count, previous + 1)
+                XCTAssertEqual(activated.last?.0, path)
+                XCTAssertEqual(activated.last?.1, scope)
+            }
+            tree.show(state, changesOnly: changesOnly)
+        }
+    }
+
+    func testFilePressCancelsWhenDraggedOutOrReloadedBeforeRelease() throws {
+        let tree = FileTree()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 500), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = tree
+        defer { withExtendedLifetime(window) {} }
+        let state = WorkspaceState(root: URL(fileURLWithPath: "/tmp/cancel-file-click"), files: ["first.ts", "second.ts"], git: nil)
+        tree.show(state, changesOnly: false)
+        tree.layoutSubtreeIfNeeded()
+        var opened = 0
+        tree.onSelect = { _, _ in opened += 1 }
+        func event(_ type: NSEvent.EventType, row: Int) throws -> NSEvent {
+            let point = tree.outline.convert(NSPoint(x: 120, y: tree.outline.rect(ofRow: row).midY), to: nil)
+            return try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        }
+        tree.outline.mouseDown(with: try event(.leftMouseDown, row: 0))
+        tree.outline.mouseDragged(with: try event(.leftMouseDragged, row: 1))
+        tree.outline.mouseUp(with: try event(.leftMouseUp, row: 1))
+        XCTAssertEqual(opened, 0)
+        tree.outline.mouseDown(with: try event(.leftMouseDown, row: 0))
+        tree.filter.stringValue = "second"
+        tree.show(state, changesOnly: false)
+        tree.outline.mouseUp(with: try event(.leftMouseUp, row: 0))
+        XCTAssertEqual(opened, 0, "Reload must cancel a press rather than activate the replacement row")
     }
 
     func testFolderNameAndBlankSpaceToggleOnceAndExposePressedFeedback() throws {

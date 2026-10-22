@@ -32,6 +32,7 @@ final class WorkspaceReaderTests: XCTestCase {
         XCTAssertEqual(state.branch, "main")
         XCTAssertEqual(Set(state.changes.map(\.path)), ["src/main.ts", "remove.ts", "new folder/中文 file.ts"])
         XCTAssertFalse(state.files.contains("ignored/file.ts"))
+        XCTAssertFalse(state.files.contains("remove.ts"), "Files must not include paths that only exist in the Git index")
         let snapshot = try reader.snapshot(path: "src/main.ts", state: state, compare: true)
         XCTAssertEqual(snapshot.before, "export const answer = 1;\n")
         XCTAssertEqual(snapshot.after, "export const answer = 3;\n")
@@ -54,6 +55,40 @@ final class WorkspaceReaderTests: XCTestCase {
         XCTAssertEqual(state.changes.count, 2)
         XCTAssertEqual(try reader.snapshot(path: "first.ts", state: state, compare: true).additions, 1)
         XCTAssertTrue(try reader.snapshot(path: "binary.bin", state: state, compare: true).isBinary)
+    }
+
+    func testFileListRefreshUsesDiskWhileChangesRetainDeletedVersions() throws {
+        try write("src/keep.ts", "keep\n")
+        try write("gone/unstaged.ts", "unstaged deletion\n")
+        try write("staged/deleted.ts", "staged deletion\n")
+        try write("rename/old.ts", "renamed then deleted\n")
+        try write(".gitignore", "ignored/\n")
+        try git(["add", "."]); try git(["commit", "-qm", "initial"])
+        let reader = try WorkspaceReader(folder: folder)
+        XCTAssertEqual(try reader.load().files.count, 5)
+
+        try FileManager.default.removeItem(at: folder.appendingPathComponent("gone/unstaged.ts"))
+        try git(["rm", "staged/deleted.ts"])
+        try git(["mv", "rename/old.ts", "rename/new.ts"])
+        try FileManager.default.removeItem(at: folder.appendingPathComponent("rename/new.ts"))
+        try write("new/中文 file.ts", "new\n")
+        try write("ignored/hidden.ts", "ignored\n")
+
+        let deleted = try reader.load()
+        XCTAssertEqual(Set(deleted.files), [".gitignore", "src/keep.ts", "new/中文 file.ts"])
+        XCTAssertEqual(Set(FileTreeIndex(paths: deleted.files).children(in: "").map(\.name)), [".gitignore", "src", "new"])
+        XCTAssertTrue(deleted.changes.contains { $0.path == "gone/unstaged.ts" && $0.kind == .deleted && $0.comparison == .unstaged })
+        XCTAssertTrue(deleted.changes.contains { $0.path == "staged/deleted.ts" && $0.kind == .deleted && $0.comparison == .staged })
+        let snapshot = try reader.snapshot(path: "gone/unstaged.ts", state: deleted, compare: true, comparison: .unstaged)
+        XCTAssertEqual(snapshot.before, "unstaged deletion\n")
+        XCTAssertEqual(snapshot.after, "")
+
+        // A staged deletion can coexist with a real, newly recreated file.
+        try write("staged/deleted.ts", "recreated on disk\n")
+        let recreated = try reader.load()
+        XCTAssertTrue(recreated.files.contains("staged/deleted.ts"))
+        XCTAssertTrue(recreated.changes.contains { $0.path == "staged/deleted.ts" && $0.kind == .deleted && $0.comparison == .staged })
+        XCTAssertEqual(try reader.snapshot(path: "staged/deleted.ts", state: recreated, compare: false).after, "recreated on disk\n")
     }
 
     func testLiteralPathspecsAndEmptyFiles() throws {
@@ -88,6 +123,56 @@ final class WorkspaceReaderTests: XCTestCase {
         XCTAssertFalse(state.isGit)
         XCTAssertEqual(state.files, ["nested/main.ts"])
         XCTAssertEqual(try reader.snapshot(path: "nested/main.ts", state: state, compare: false).after, "let count = 0;\n")
+    }
+
+    func testIgnoredRegularFilesAndSymlinksDoNotSkipAdjacentDirectories() throws {
+        try FileManager.default.removeItem(at: folder.appendingPathComponent(".git"))
+        try write("src/.DS_Store", "Finder metadata\n")
+        try write("src/auth/request.ts", "export const request = true;\n")
+        try write("src/biz-groups/index.ts", "export const group = true;\n")
+        try write("src/shared/index.ts", "export const shared = true;\n")
+        // Linked worktrees have a regular .git marker rather than a directory.
+        try write(".git", "gitdir: /nonexistent/fixture\n")
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("src/alias"), withDestinationURL: folder.appendingPathComponent("src/auth"))
+        let paths = try FileBrowser(root: folder).list()
+        XCTAssertEqual(Set(paths), ["src/alias", "src/auth/request.ts", "src/biz-groups/index.ts", "src/shared/index.ts"])
+        XCTAssertFalse(paths.contains { $0.hasPrefix("src/alias/") }, "Directory links must not be traversed")
+    }
+
+    func testIgnoredSubtreesArePrunedWithoutHidingTrackedFilesOrNewIgnoreRules() throws {
+        try write(".gitignore", "cache/\nsrc/generated/\n")
+        try write("cache/untracked.ts", "ignored\n")
+        try write("cache/nested/keep.ts", "tracked exception\n")
+        try write("src/generated/ignored.ts", "ignored\n")
+        try write("src/visible.ts", "visible\n")
+        try git(["add", "-f", "cache/nested/keep.ts"])
+        let reader = try WorkspaceReader(folder: folder)
+        XCTAssertEqual(Set(try reader.load().files), [".gitignore", "cache/nested/keep.ts", "src/visible.ts"])
+        // Refresh must evaluate changed ignore rules rather than reuse old ones.
+        try write(".gitignore", "cache/\n")
+        XCTAssertEqual(Set(try reader.load().files), [".gitignore", "cache/nested/keep.ts", "src/visible.ts", "src/generated/ignored.ts"])
+    }
+
+    func testRepeatedDiffReadsInvalidateOnActualSourceAndIndexContentChanges() throws {
+        try write("sample.ts", "export const value = 1;\n")
+        try git(["add", "."]); try git(["commit", "-qm", "initial"])
+        try write("sample.ts", "export const value = 2;\n")
+        let reader = try WorkspaceReader(folder: folder)
+        let state = try reader.load()
+        let first = try reader.snapshot(path: "sample.ts", state: state, compare: true, comparison: .unstaged)
+        XCTAssertEqual(try reader.snapshot(path: "sample.ts", state: state, compare: true, comparison: .unstaged), first)
+        try write("sample.ts", "export const value = 3;\n")
+        let second = try reader.snapshot(path: "sample.ts", state: state, compare: true, comparison: .unstaged)
+        XCTAssertEqual(second.after, "export const value = 3;\n")
+        XCTAssertNotEqual(second, first)
+        try git(["add", "sample.ts"])
+        let staged = try reader.snapshot(path: "sample.ts", state: try reader.load(), compare: true, comparison: .staged)
+        XCTAssertEqual(staged.before, first.before)
+        XCTAssertEqual(staged.after, second.after)
+        let clean = try reader.snapshot(path: "sample.ts", state: try reader.load(), compare: true, comparison: .unstaged)
+        XCTAssertEqual(clean.before, clean.after)
+        XCTAssertEqual(clean.additions, 0)
+        XCTAssertEqual(clean.deletions, 0)
     }
 
     func testStagedAndUnstagedVersionsRemainIndependentWhenChangesCancel() throws {

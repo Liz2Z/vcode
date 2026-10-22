@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="660" viewBox="172 192 680 660" role="img" aria-labelledby="title"><title id="title">VCode — Crossed Lightsabers</title><defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#252830"/><stop offset="1" stop-color="#111318"/></linearGradient>
+    <linearGradient id="metal"><stop stop-color="#5D6775"/><stop offset="0.24" stop-color="#CBD3DC"/><stop offset="0.48" stop-color="#F0F3F6"/><stop offset="0.68" stop-color="#929DAA"/><stop offset="1" stop-color="#46515E"/></linearGradient>
+    <filter id="halo" filterUnits="userSpaceOnUse" x="-140" y="-600" width="280" height="850"><feGaussianBlur stdDeviation="24"/></filter>
+    <filter id="glow" filterUnits="userSpaceOnUse" x="-100" y="-560" width="200" height="800"><feGaussianBlur stdDeviation="9"/></filter>
+    <clipPath id="tile"><rect x="80" y="80" width="864" height="864" rx="196"/></clipPath>
+    <g id="hilt">
+      <rect x="-23" y="5" width="46" height="101" rx="7" fill="url(#metal)"/>
+      <rect x="-17" y="37" width="34" height="56" rx="4" fill="#222831"/>
+      <path d="M-19 48H19M-19 65H19M-19 82H19" stroke="#5E6A78" stroke-width="6"/>
+      <rect x="-29" y="1" width="58" height="16" rx="4" fill="url(#metal)"/>
+      <rect x="-26" y="100" width="52" height="13" rx="4" fill="url(#metal)"/>
+    </g>
+  </defs><g id="mark">
+    <!-- The short crossed hilts sit below the long V-shaped blades. -->
+    <g transform="translate(497 690) rotate(30)">
+      <path d="M0-480V0" stroke="#FF234D" stroke-width="74" stroke-linecap="round" opacity="0.25" filter="url(#halo)"/>
+      <path d="M0-480V0" stroke="#FF3153" stroke-width="48" stroke-linecap="round" opacity="0.9" filter="url(#glow)"/>
+      <path d="M0-480V0" stroke="#FF7F8C" stroke-width="32" stroke-linecap="round"/>
+      <path d="M0-480V0" stroke="#FFF2F3" stroke-width="16" stroke-linecap="round"/>
+      <use href="#hilt"/>
+    </g>
+    <!-- Blue crosses in front, preserving the left-over-right relationship. -->
+    <g transform="translate(527 690) rotate(-30)">
+      <path d="M0-480V0" stroke="#157DFF" stroke-width="74" stroke-linecap="round" opacity="0.25" filter="url(#halo)"/>
+      <path d="M0-480V0" stroke="#218FFF" stroke-width="48" stroke-linecap="round" opacity="0.95" filter="url(#glow)"/>
+      <path d="M0-480V0" stroke="#8ACFFF" stroke-width="32" stroke-linecap="round"/>
+      <path d="M0-480V0" stroke="#F0F9FF" stroke-width="16" stroke-linecap="round"/>
+      <use href="#hilt"/>
+    </g>
+  </g></svg>

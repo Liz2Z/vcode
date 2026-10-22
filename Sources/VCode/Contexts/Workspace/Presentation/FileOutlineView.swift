@@ -2,7 +2,7 @@ import AppKit
 
 final class FileOutlineView: NSOutlineView {
     private(set) var isHandlingMouse = false
-    private var pressedFolder: FileNode?
+    private var pressedNode: FileNode?
     private var pressedRow = -1
     private var hoveredRow = -1
     private var pointerTracking: NSTrackingArea?
@@ -37,40 +37,55 @@ final class FileOutlineView: NSOutlineView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        cancelPress()
         guard isEnabled else { return }
         updateHover(event)
         let row = self.row(at: convert(event.locationInWindow, from: nil))
-        guard row >= 0 else { super.mouseDown(with: event); return }
+        guard row >= 0, let node = item(atRow: row) as? FileNode else { super.mouseDown(with: event); return }
+        pressedNode = node
+        pressedRow = row
         let feedback = rowView(atRow: row, makeIfNecessary: false) as? SelectionRowView
         feedback?.isPressed = true
         feedback?.displayIfNeeded()
-        if let node = item(atRow: row) as? FileNode, node.directory {
-            pressedFolder = node
-            pressedRow = row
-            window?.makeFirstResponder(self)
-            selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            return
-        }
+        // Use the same explicit row interaction for files and folders. After
+        // reload/expansion AppKit's mouse tracking can return without selecting
+        // a rebuilt file row; don't depend on its cached clicked-row state.
         isHandlingMouse = true
-        defer { isHandlingMouse = false; feedback?.isPressed = false }
-        super.mouseDown(with: event)
+        defer { isHandlingMouse = false }
+        window?.makeFirstResponder(self)
+        selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
     }
 
     override func mouseDragged(with event: NSEvent) {
         updateHover(event)
-        guard pressedFolder != nil else { super.mouseDragged(with: event); return }
+        guard pressedNode != nil else { super.mouseDragged(with: event); return }
         let inside = row(at: convert(event.locationInWindow, from: nil)) == pressedRow
         (rowView(atRow: pressedRow, makeIfNecessary: false) as? SelectionRowView)?.isPressed = inside
     }
 
     override func mouseUp(with event: NSEvent) {
         updateHover(event)
-        guard let node = pressedFolder else { super.mouseUp(with: event); return }
+        guard let node = pressedNode else { super.mouseUp(with: event); return }
         let inside = row(at: convert(event.locationInWindow, from: nil)) == pressedRow
-        (rowView(atRow: pressedRow, makeIfNecessary: false) as? SelectionRowView)?.isPressed = false
-        pressedFolder = nil
-        pressedRow = -1
+            && item(atRow: pressedRow) as? FileNode === node
+            && selectedRow == pressedRow
+        cancelPress()
         guard inside else { return }
-        if isItemExpanded(node) { collapseItem(node) } else { expandItem(node) }
+        if node.directory {
+            if isItemExpanded(node) { collapseItem(node) } else { expandItem(node) }
+        } else { _ = sendAction(action, to: target) }
+    }
+
+    override func reloadData() {
+        cancelPress()
+        if hoveredRow >= 0 { (rowView(atRow: hoveredRow, makeIfNecessary: false) as? SelectionRowView)?.isHovered = false }
+        hoveredRow = -1
+        super.reloadData()
+    }
+
+    private func cancelPress() {
+        if pressedRow >= 0 { (rowView(atRow: pressedRow, makeIfNecessary: false) as? SelectionRowView)?.isPressed = false }
+        pressedNode = nil
+        pressedRow = -1
     }
 }
