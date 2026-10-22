@@ -31,7 +31,8 @@ final class LanguageServiceTests: XCTestCase {
         let usage = folder.appendingPathComponent("usage.ts")
         let source = "export interface Payload { value: string; }\nexport interface NeverUsed { unused: true; }\n"
         try source.write(to: model, atomically: true, encoding: .utf8)
-        try "import type { Payload } from './model';\nexport function read(value: Payload): Payload { return value; }\n".write(to: usage, atomically: true, encoding: .utf8)
+        let usageSource = "import type { Payload } from './model';\nexport function read(value: Payload): Payload { return value; }\n"
+        try usageSource.write(to: usage, atomically: true, encoding: .utf8)
         try "interface Payload { different: number; }\nconst unrelated: Payload = { different: 1 };\nexport {};\n".write(to: folder.appendingPathComponent("unrelated.ts"), atomically: true, encoding: .utf8)
         try "{\"compilerOptions\":{\"strict\":true},\"include\":[\"*.ts\"]}".write(to: folder.appendingPathComponent("tsconfig.json"), atomically: true, encoding: .utf8)
         let resourcePath = ProcessInfo.processInfo.environment["VCODE_LSP_RESOURCES"]
@@ -57,6 +58,16 @@ final class LanguageServiceTests: XCTestCase {
             empty.fulfill()
         }
         wait(for: [empty], timeout: 25)
+        service.open(url: usage, text: usageSource, root: folder)
+        let imported = expectation(description: "Imported type references exclude the original declaration too")
+        let column = (usageSource.components(separatedBy: "\n")[1] as NSString).range(of: "Payload").location + 2
+        service.inspect(url: usage, line: 1, character: column, kind: .references) { result in
+            guard case .success(.locations(let locations)) = result else { XCTFail("Expected imported type references: \(result)"); imported.fulfill(); return }
+            XCTAssertEqual(locations.count, 3)
+            XCTAssertTrue(locations.allSatisfy { $0.url == usage }, "The original declaration must not be counted when querying from an imported alias: \(locations)")
+            imported.fulfill()
+        }
+        wait(for: [imported], timeout: 25)
     }
 
     func testRealNestedMemberAndConsecutiveTypeDefinitionJumps() throws {

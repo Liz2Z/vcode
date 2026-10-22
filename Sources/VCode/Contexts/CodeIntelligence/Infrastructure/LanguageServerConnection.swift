@@ -189,8 +189,21 @@ final class LanguageServerConnection {
     func inspect(location: CodeLocation, kind: InspectionKind, completion: @escaping (Result<LanguageInspection, Error>) -> Void) {
         var params: [String: Any] = ["textDocument": ["uri": location.url.absoluteString], "position": ["line": location.line, "character": location.character]]
         if kind == .references { params["context"] = ["includeDeclaration": false] }
-        request("textDocument/" + kind.rawValue, params) { result in
-            completion(result.flatMap { value in Result { try LSPInspectionMapper.decode(value, kind: kind) } })
+        request("textDocument/" + kind.rawValue, params) { [weak self] result in
+            let decoded = result.flatMap { value in Result { try LSPInspectionMapper.decode(value, kind: kind) } }
+            guard kind == .references, case .success(.locations(let references)) = decoded, !references.isEmpty else { completion(decoded); return }
+            guard let self else { completion(.failure(LanguageServiceError.connection("Language service stopped."))); return }
+            // The TS server may mark an import alias as the definition while
+            // returning its original declaration as an ordinary reference.
+            // Resolve the actual target as well, so includeDeclaration:false
+            // has the same meaning when queried from a declaration or a use.
+            self.inspect(location: location, kind: .definition) { result in
+                completion(result.map { value in
+                    guard case .locations(let definitions) = value else { return .locations(references) }
+                    let targets = Set(definitions.map { CodeLocation(url: $0.url.standardizedFileURL, line: $0.line, character: $0.character) })
+                    return .locations(references.filter { !targets.contains(CodeLocation(url: $0.url.standardizedFileURL, line: $0.line, character: $0.character)) })
+                })
+            }
         }
     }
 

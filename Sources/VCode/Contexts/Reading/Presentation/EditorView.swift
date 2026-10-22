@@ -5,6 +5,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     let right = CodePane()
     let breadcrumbs = EditorBreadcrumbs()
     let welcome = WelcomeView()
+    let markdown = MarkdownPreview()
     private let tabs = EditorTabs()
     private let split = ReadingSplitView()
     private let message = Theme.label("", size: 13, color: Theme.muted)
@@ -12,6 +13,8 @@ final class EditorView: NSView, NSSplitViewDelegate {
     private var snapshot: FileSnapshot?
     private var renderedDiff = false
     private var changeIndex = -1
+    private var markdownSourcePaths: Set<String> = []
+    var showingMarkdownPreview: Bool { !markdown.isHidden }
     private(set) var showingDiff = false
     var activeComparison: GitComparison? { session.activeDocument?.comparison }
     var activePath: String? { session.activePath }
@@ -30,17 +33,20 @@ final class EditorView: NSView, NSSplitViewDelegate {
         split.addArrangedSubview(right)
         message.alignment = .center
         message.maximumNumberOfLines = 3
-        add(tabs, breadcrumbs, split, message, welcome)
+        add(tabs, breadcrumbs, split, markdown, message, welcome)
         NSLayoutConstraint.activate([
             tabs.topAnchor.constraint(equalTo: topAnchor), tabs.leadingAnchor.constraint(equalTo: leadingAnchor), tabs.trailingAnchor.constraint(equalTo: trailingAnchor), tabs.heightAnchor.constraint(equalToConstant: 40),
             breadcrumbs.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 4), breadcrumbs.leadingAnchor.constraint(equalTo: leadingAnchor), breadcrumbs.trailingAnchor.constraint(equalTo: trailingAnchor), breadcrumbs.heightAnchor.constraint(equalToConstant: 28),
             split.topAnchor.constraint(equalTo: breadcrumbs.bottomAnchor, constant: 4), split.leadingAnchor.constraint(equalTo: leadingAnchor), split.trailingAnchor.constraint(equalTo: trailingAnchor), split.bottomAnchor.constraint(equalTo: bottomAnchor),
+            markdown.topAnchor.constraint(equalTo: split.topAnchor), markdown.leadingAnchor.constraint(equalTo: split.leadingAnchor), markdown.trailingAnchor.constraint(equalTo: split.trailingAnchor), markdown.bottomAnchor.constraint(equalTo: split.bottomAnchor),
             message.centerXAnchor.constraint(equalTo: split.centerXAnchor), message.centerYAnchor.constraint(equalTo: split.centerYAnchor), message.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 30), message.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -30),
             welcome.topAnchor.constraint(equalTo: topAnchor), welcome.leadingAnchor.constraint(equalTo: leadingAnchor), welcome.trailingAnchor.constraint(equalTo: trailingAnchor), welcome.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
         tabs.onSelect = { [weak self] document in self?.onSelectFile?(document.path, document.comparison) }
         tabs.onClose = { [weak self] document in self?.close(document) }
         welcome.openButton.target = self; welcome.openButton.action = #selector(openFolder)
+        breadcrumbs.sourceButton.target = self; breadcrumbs.sourceButton.action = #selector(showMarkdownSource)
+        breadcrumbs.previewButton.target = self; breadcrumbs.previewButton.action = #selector(showMarkdownPreview)
         left.onScroll = { [weak self] point in if self?.showingDiff == true { self?.right.sync(to: point) } }
         right.onScroll = { [weak self] point in if self?.showingDiff == true { self?.left.sync(to: point) } }
         right.text.onCursor = { [weak self] index in guard let self, let position = self.right.position(at: index) else { return }; self.onCursor?(position) }
@@ -57,6 +63,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         showingDiff = diff && isGit
         tabs.show(session)
         breadcrumbs.path.stringValue = path.replacingOccurrences(of: "/", with: "  ›  ")
+        breadcrumbs.showMarkdownControls(MarkdownRenderer.supports(path) && !showingDiff, preview: !markdownSourcePaths.contains(path))
         tabs.isHidden = false
         breadcrumbs.isHidden = false
         welcome.isHidden = true
@@ -93,6 +100,13 @@ final class EditorView: NSView, NSSplitViewDelegate {
             if !preserveScroll { changeIndex = -1 }
         }
         breadcrumbs.showCounts(diff ? next : nil)
+        let supportsPreview = MarkdownRenderer.supports(next.path) && !diff
+        let preview = supportsPreview && !markdownSourcePaths.contains(next.path)
+        if supportsPreview && !unchanged { markdown.show(next.after) }
+        if !supportsPreview { markdown.clear() }
+        markdown.isHidden = !preview
+        split.isHidden = preview
+        breadcrumbs.showMarkdownControls(supportsPreview, preview: preview)
         if let position { right.reveal(line: position.0, character: position.1, highlightDestination: highlightDestination) }
     }
 
@@ -100,6 +114,8 @@ final class EditorView: NSView, NSSplitViewDelegate {
     private func showMessage(_ text: String) {
         welcome.isHidden = true
         split.isHidden = true
+        markdown.isHidden = true
+        markdown.clear()
         message.stringValue = text
         message.isHidden = false
         breadcrumbs.showCounts(nil)
@@ -111,6 +127,9 @@ final class EditorView: NSView, NSSplitViewDelegate {
         snapshot = nil
         showingDiff = false
         renderedDiff = false
+        markdownSourcePaths.removeAll()
+        markdown.clear()
+        markdown.isHidden = true
         changeIndex = -1
         left.show(lines: [], path: "", title: "", detail: "")
         right.show(lines: [], path: "", title: "", detail: "")
@@ -121,6 +140,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         message.isHidden = true
         breadcrumbs.path.stringValue = ""
         breadcrumbs.showCounts(nil)
+        breadcrumbs.showMarkdownControls(false, preview: false)
     }
 
     @discardableResult
@@ -148,6 +168,16 @@ final class EditorView: NSView, NSSplitViewDelegate {
     }
 
     @objc private func openFolder() { onOpenFolder?() }
+    @objc func showMarkdownSource() { setMarkdownPreview(false) }
+    @objc func showMarkdownPreview() { setMarkdownPreview(true) }
+    private func setMarkdownPreview(_ preview: Bool) {
+        guard let path = activePath, let snapshot, snapshot.path == path, MarkdownRenderer.supports(path), !showingDiff, snapshot.message == nil else { return }
+        if preview { markdownSourcePaths.remove(path) } else { markdownSourcePaths.insert(path) }
+        markdown.isHidden = !preview
+        split.isHidden = preview
+        breadcrumbs.showMarkdownControls(true, preview: preview)
+        if preview { window?.makeFirstResponder(markdown.text) } else { window?.makeFirstResponder(right.text) }
+    }
     func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { subview == left }
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { 180 }
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { splitView.bounds.width - 180 }

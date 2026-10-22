@@ -19,6 +19,7 @@ final class CodeTextView: NSTextView {
     private var commandToken = UUID()
     private var symbolToken = UUID()
     private var commandHeld = false
+    private var modifierMonitor: Any?
     private var commandCandidate: NSRange?
     private(set) var underlinedIdentifier: NSRange?
     private(set) var occurrenceRanges: [NSRange] = []
@@ -67,7 +68,21 @@ final class CodeTextView: NSTextView {
         setNeedsDisplay(rect)
     }
 
-    deinit { navigationTimer?.invalidate(); commandWork?.cancel() }
+    deinit { navigationTimer?.invalidate(); commandWork?.cancel(); if let modifierMonitor { NSEvent.removeMonitor(modifierMonitor) } }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let modifierMonitor { NSEvent.removeMonitor(modifierMonitor) }
+        modifierMonitor = nil
+        clearCommandFeedback()
+        guard let window else { return }
+        window.acceptsMouseMovedEvents = true
+        modifierMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self, weak window] event in
+            guard let self, let window, window.isKeyWindow, !self.isHiddenOrHasHiddenAncestor else { return event }
+            self.updatePointer(at: self.convert(window.mouseLocationOutsideOfEventStream, from: nil), modifiers: event.modifierFlags)
+            return event
+        }
+    }
 
     func resetSymbolFeedback() {
         clearCommandFeedback()
@@ -256,7 +271,9 @@ final class CodeTextView: NSTextView {
     override func scrollWheel(with event: NSEvent) { cancelInspection(); super.scrollWheel(with: event) }
 
     override func keyDown(with event: NSEvent) {
-        cancelInspection()
+        clearInspectionFeedback()
+        onHoverInvalidated?()
+        if !event.modifierFlags.contains(.command) { clearCommandFeedback() }
         if event.keyCode != 53 { super.keyDown(with: event) }
     }
 

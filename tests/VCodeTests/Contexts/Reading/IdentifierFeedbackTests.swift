@@ -36,6 +36,7 @@ final class IdentifierFeedbackTests: XCTestCase {
         XCTAssertEqual(probes, 0)
         XCTAssertNil(pane.text.underlinedIdentifier)
         XCTAssertNil(pane.text.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: range.location, effectiveRange: nil))
+        XCTAssertTrue(window.acceptsMouseMovedEvents, "The real window must deliver pointer motion, not only explicit test events")
     }
 
     func testCommandHoverOnlyUnderlinesConfirmedTargetsAndReleaseClearsIt() throws {
