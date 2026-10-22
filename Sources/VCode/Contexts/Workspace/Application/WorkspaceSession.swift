@@ -9,7 +9,8 @@ final class WorkspaceSession {
     private let queue = DispatchQueue(label: "vcode.workspace", qos: .userInitiated)
     private var watcher: FolderWatcher?
     private var generation = UUID()
-    private var documentGeneration = UUID()
+    private let defaultDocumentScope = UUID()
+    private var documentGenerations: [UUID: UUID] = [:]
     private var refreshing = false
     private var refreshAgain = false
     private(set) var isSwitching = false
@@ -61,21 +62,25 @@ final class WorkspaceSession {
         }
     }
 
-    func read(_ path: String, diff: Bool, comparison: GitComparison = .workingTree, completion: @escaping (Result<FileSnapshot, Error>) -> Void) {
+    func read(_ path: String, diff: Bool, comparison: GitComparison = .workingTree, scope: UUID? = nil, completion: @escaping (Result<FileSnapshot, Error>) -> Void) {
         guard let reader, let state, !isSwitching else { return }
-        documentGeneration = UUID()
-        let token = documentGeneration
+        let scope = scope ?? defaultDocumentScope
+        let token = UUID()
+        documentGenerations[scope] = token
         let workspaceToken = generation
         queue.async { [weak self] in
             let result = Result { try reader.snapshot(path: path, state: state, compare: diff, comparison: comparison) }
             DispatchQueue.main.async {
-                guard let self, self.generation == workspaceToken, self.documentGeneration == token else { return }
+                guard let self, self.generation == workspaceToken, self.documentGenerations[scope] == token else { return }
                 completion(result)
             }
         }
     }
 
-    func invalidateDocument() { documentGeneration = UUID() }
+    func invalidateDocument(scope: UUID? = nil) {
+        if let scope { documentGenerations.removeValue(forKey: scope) }
+        else { documentGenerations.removeAll() }
+    }
 
     func destinations(completion: @escaping (Result<GitDestinations, Error>) -> Void) {
         guard let reader, !isSwitching else { return }

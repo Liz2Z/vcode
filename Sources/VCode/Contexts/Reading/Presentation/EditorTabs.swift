@@ -13,6 +13,8 @@ final class EditorTabs: NSView, NSDraggingSource {
     private let dragToken = UUID().uuidString
     private var draggingDocument: ReadingDocument?
     private var insertionIndex: Int?
+    private var groupFocused = true
+    private var activeID: String?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -42,10 +44,12 @@ final class EditorTabs: NSView, NSDraggingSource {
         for child in stack.arrangedSubviews { stack.removeArrangedSubview(child); child.removeFromSuperview() }
         var activeTab: NSView?
         documents = session.documents
+        activeID = session.activeDocument?.id
         for document in documents {
             let path = document.path
             let active = document == session.activeDocument
             let content = TabContent(active: active)
+            content.groupFocused = groupFocused
             let title = TabTitleButton(frame: .zero)
             title.activationView = content
             content.onMouseDown = { [weak title] event in title?.mouseDown(with: event) }
@@ -68,7 +72,7 @@ final class EditorTabs: NSView, NSDraggingSource {
             }
             title.alignment = .left
             title.font = .systemFont(ofSize: 13, weight: active ? .medium : .regular)
-            title.contentTintColor = active ? Theme.accent : Theme.muted
+            title.contentTintColor = active ? (groupFocused ? Theme.accent : Theme.text) : Theme.muted
             title.setAccessibilityValue(active ? 1 : 0)
             title.imagePosition = .noImage
             title.toolTip = path + (document.comparison.map { " · " + $0.rawValue } ?? " · Source")
@@ -94,6 +98,17 @@ final class EditorTabs: NSView, NSDraggingSource {
         else {
             scroll.contentView.scroll(to: NSPoint(x: min(previousOffset.x, max(0, stack.bounds.width - scroll.contentSize.width)), y: previousOffset.y))
             scroll.reflectScrolledClipView(scroll.contentView)
+        }
+    }
+
+    func setGroupFocused(_ focused: Bool) {
+        groupFocused = focused
+        for case let content as TabContent in stack.arrangedSubviews {
+            content.groupFocused = focused
+            for case let title as TabTitleButton in content.subviews {
+                let active = title.identifier?.rawValue == activeID
+                title.contentTintColor = active ? (focused ? Theme.accent : Theme.text) : Theme.muted
+            }
         }
     }
 
@@ -208,6 +223,7 @@ private final class TabDropIndicator: NSView {
 
 private final class TabContent: NSView {
     var onMouseDown: ((NSEvent) -> Void)?
+    var groupFocused = true { didSet { updateFeedback() } }
     private var tracking: NSTrackingArea?
     private let active: Bool
     private var hovered = false
@@ -240,7 +256,8 @@ private final class TabContent: NSView {
     override func mouseExited(with event: NSEvent) { hovered = false; updateFeedback() }
     func setPressed(_ value: Bool) { pressed = value; updateFeedback() }
     private func updateFeedback() {
-        let color: NSColor = pressed ? Theme.accent.withAlphaComponent(0.24) : active ? (hovered ? Theme.surface.blended(withFraction: 0.12, of: .white)! : Theme.surface) : hovered ? NSColor.white.withAlphaComponent(0.08) : .clear
+        let selected = groupFocused ? Theme.surface : Theme.surface.withAlphaComponent(0.5)
+        let color: NSColor = pressed ? Theme.accent.withAlphaComponent(0.24) : active ? (hovered ? selected.blended(withFraction: 0.12, of: .white)! : selected) : hovered ? NSColor.white.withAlphaComponent(0.08) : .clear
         layer?.backgroundColor = color.cgColor
     }
 }

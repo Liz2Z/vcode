@@ -99,6 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item(edit, "Copy", #selector(NSText.copy(_:)), "c")
         item(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
         let view = submenu("View")
+        item(view, "Split Editor Right", #selector(WorkspaceController.splitEditorRight), "\\", target: workspace)
+        view.addItem(.separator())
         item(view, "Files", #selector(WorkspaceController.showFiles), "1", target: workspace)
         item(view, "Changes", #selector(WorkspaceController.showChanges), "2", target: workspace)
         view.addItem(.separator())

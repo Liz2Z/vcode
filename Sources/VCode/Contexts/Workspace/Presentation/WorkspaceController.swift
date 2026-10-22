@@ -8,6 +8,8 @@ final class WorkspaceController: NSViewController {
     private var changesOnly = false
     private var inspectToken = UUID()
     private var hoverRequest = UUID()
+    private weak var inspectionEditor: EditorView?
+    private var languageStatus = ""
     private var observer: NSObjectProtocol?
     private var picker: NSPopover?
     private var pickerRequest = UUID()
@@ -51,42 +53,36 @@ final class WorkspaceController: NSViewController {
             guard let url = try? self?.session.reader?.files.safeURL(path) else { return }
             NSWorkspace.shared.activateFileViewerSelecting([url])
         }
-        workspace.editor.onOpenFolder = { [weak self] in self?.openFolder() }
-        workspace.editor.onSelectFile = { [weak self] path, comparison in self?.openFile(path, diff: comparison != nil, comparison: comparison ?? .workingTree) }
-        workspace.editor.onLastTabClosed = { [weak self] in
-            self?.session.invalidateDocument(); self?.inspection.dismiss(); self?.language.stop(); self?.inspectToken = UUID(); self?.workspace.status.language.stringValue = ""
+        workspace.editorGroups.editors.forEach(configureEditor)
+        workspace.editorGroups.onEditorAdded = { [weak self] editor in self?.configureEditor(editor) }
+        workspace.editorGroups.onEditorRemoved = { [weak self] editor in
+            guard let self else { return }
+            self.session.invalidateDocument(scope: editor.readingID)
+            if self.inspectionEditor === editor { self.inspection.dismiss(); self.inspectionEditor = nil }
+            if self.workspace.editorGroups.editors.allSatisfy({ $0.activePath == nil }) { self.language.stop() }
+            self.refreshLanguageStatus()
         }
-        workspace.editor.onCursor = { [weak self] position in self?.workspace.status.message.stringValue = "Ln \(position.line + 1), Col \(position.character + 1)  ·  Read Only" }
-        workspace.editor.right.text.onInspect = { [weak self] index, kind in self?.inspect(index: index, kind: kind) }
-        workspace.editor.right.text.onDefinitionProbe = { [weak self] index, completion in
-            guard let self else { completion(false); return }
-            self.querySymbol(index: index, kind: .definition) { [weak self] value in
-                guard let self, let root = self.session.reader?.root, case .locations(let locations) = value else { completion(false); return }
-                completion(locations.contains { self.canNavigate($0, root: root) })
-            }
+        workspace.editorGroups.onActiveChanged = { [weak self] editor in
+            guard let self else { return }
+            self.inspectToken = UUID(); self.hoverRequest = UUID()
+            self.inspection.dismiss()
+            self.syncLanguage(for: editor)
+            self.refreshLanguageStatus()
         }
-        workspace.editor.right.text.onSymbolClick = { [weak self] index, completion in
-            guard let self else { completion([]); return }
-            self.querySymbol(index: index, kind: .documentHighlight) { [weak self] value in
-                guard let self, case .highlights(let occurrences) = value else { completion([]); return }
-                let pane = self.workspace.editor.right
-                completion(occurrences.compactMap { pane.characterRange(startLine: $0.startLine, startCharacter: $0.startCharacter, endLine: $0.endLine, endCharacter: $0.endCharacter) })
-            }
+        workspace.editorGroups.onSplitDocument = { [weak self] document, editor in
+            self?.openFile(document.path, diff: document.comparison != nil, comparison: document.comparison ?? .workingTree, editor: editor)
         }
-        workspace.editor.right.text.onHoverInvalidated = { [weak self] in
-            self?.hoverRequest = UUID()
-            self?.inspection.dismissHover()
+        inspection.onHoverDismiss = { [weak self] in self?.inspectionEditor?.right.text.clearInspectionFeedback() }
+        inspection.onFindReferences = { [weak self] index in
+            guard let self else { return }
+            let editor = self.inspectionEditor ?? self.workspace.editor
+            self.workspace.editorGroups.activate(editor)
+            self.inspect(index: index, kind: "references", editor: editor)
         }
-        workspace.editor.right.text.onHoverExited = { [weak self] in
-            self?.hoverRequest = UUID()
-            self?.inspection.dismissHoverWhenPointerLeaves()
-        }
-        workspace.editor.right.text.onHoverMoved = { [weak self] point in self?.inspection.hoverPointerMoved(to: point) }
-        inspection.onHoverDismiss = { [weak self] in self?.workspace.editor.right.text.clearInspectionFeedback() }
-        inspection.onFindReferences = { [weak self] index in self?.inspect(index: index, kind: "references") }
         language.onStatus = { [weak self] text in
             guard let self else { return }
-            self.workspace.status.language.stringValue = text
+            self.languageStatus = text
+            self.refreshLanguageStatus()
             if text == "TypeScript · Ready", self.workspace.status.message.stringValue.hasPrefix("TypeScript") {
                 self.workspace.status.message.stringValue = "Read Only"
                 self.workspace.status.message.toolTip = nil
@@ -97,10 +93,14 @@ final class WorkspaceController: NSViewController {
             self?.workspace.status.message.toolTip = reason
         }
         inspection.onStatus = { [weak self] text in self?.workspace.status.message.stringValue = text }
-        inspection.onNavigate = { [weak self] location in self?.navigate(location) }
+        inspection.onNavigate = { [weak self] location in
+            guard let self else { return }
+            if let editor = self.inspectionEditor { self.workspace.editorGroups.activate(editor) }
+            self.navigate(location)
+        }
         session.onOpen = { [weak self] state in
             guard let self else { return }
-            self.workspace.editor.reset()
+            self.workspace.editorGroups.reset()
             self.history.record(state)
             self.displayedBranch = state.branch
             self.workspace.show(state, changesOnly: self.changesOnly)
@@ -116,13 +116,78 @@ final class WorkspaceController: NSViewController {
                 self.displayedBranch = state.branch
             }
             self.workspace.show(state, changesOnly: self.changesOnly)
-            if let path = self.workspace.editor.activePath { self.loadFile(path, diff: self.workspace.editor.showingDiff, comparison: self.workspace.editor.activeComparison ?? .workingTree, preserveScroll: true) }
+            for editor in self.workspace.editorGroups.editors {
+                if let path = editor.activePath { self.loadFile(path, diff: editor.showingDiff, comparison: editor.activeComparison ?? .workingTree, preserveScroll: true, editor: editor) }
+            }
         }
         session.onError = { [weak self] error in self?.workspace.status.message.stringValue = error.localizedDescription }
         if let error = history.persistenceError {
             workspace.status.message.stringValue = error
             workspace.status.message.toolTip = error
         }
+    }
+
+    private func configureEditor(_ editor: EditorView) {
+        editor.onOpenFolder = { [weak self] in self?.openFolder() }
+        editor.onSelectFile = { [weak self, weak editor] path, comparison in
+            guard let self, let editor else { return }
+            self.workspace.editorGroups.activate(editor)
+            self.openFile(path, diff: comparison != nil, comparison: comparison ?? .workingTree, editor: editor)
+        }
+        editor.onLastTabClosed = { [weak self, weak editor] in
+            guard let self, let editor else { return }
+            self.session.invalidateDocument(scope: editor.readingID)
+            if self.inspectionEditor === editor { self.inspection.dismiss() }
+            if self.workspace.editorGroups.editors.count == 2 { self.workspace.editorGroups.close(editor) }
+            else { self.language.stop(); self.inspectToken = UUID() }
+            self.refreshLanguageStatus()
+        }
+        editor.onCursor = { [weak self, weak editor] position in
+            guard let self, let editor, self.workspace.editor === editor else { return }
+            self.workspace.status.message.stringValue = "Ln \(position.line + 1), Col \(position.character + 1)  ·  Read Only"
+        }
+        editor.right.text.onInspect = { [weak self, weak editor] index, kind in
+            guard let self, let editor else { return }
+            if kind != "hover" { self.workspace.editorGroups.activate(editor) }
+            self.inspect(index: index, kind: kind, editor: editor)
+        }
+        editor.right.text.onDefinitionProbe = { [weak self, weak editor] index, completion in
+            guard let self, let editor else { completion(false); return }
+            self.querySymbol(index: index, kind: .definition, editor: editor) { [weak self] value in
+                guard let self, let root = self.session.reader?.root, case .locations(let locations) = value else { completion(false); return }
+                completion(locations.contains { self.canNavigate($0, root: root) })
+            }
+        }
+        editor.right.text.onSymbolClick = { [weak self, weak editor] index, completion in
+            guard let self, let editor else { completion([]); return }
+            self.querySymbol(index: index, kind: .documentHighlight, editor: editor) { [weak editor] value in
+                guard let editor, case .highlights(let occurrences) = value else { completion([]); return }
+                completion(occurrences.compactMap { editor.right.characterRange(startLine: $0.startLine, startCharacter: $0.startCharacter, endLine: $0.endLine, endCharacter: $0.endCharacter) })
+            }
+        }
+        editor.right.text.onHoverInvalidated = { [weak self, weak editor] in
+            guard let self, let editor, self.inspectionEditor === editor else { return }
+            self.hoverRequest = UUID(); self.inspection.dismissHover()
+        }
+        editor.right.text.onHoverExited = { [weak self, weak editor] in
+            guard let self, let editor, self.inspectionEditor === editor else { return }
+            self.hoverRequest = UUID(); self.inspection.dismissHoverWhenPointerLeaves()
+        }
+        editor.right.text.onHoverMoved = { [weak self, weak editor] point in
+            guard let self, let editor, self.inspectionEditor === editor else { return }
+            self.inspection.hoverPointerMoved(to: point)
+        }
+    }
+
+    private func syncLanguage(for editor: EditorView) {
+        guard let reader = session.reader, let path = editor.activePath, let source = editor.currentSource,
+              language.supports(path), FileManager.default.fileExists(atPath: reader.root.appendingPathComponent(path).path) else { return }
+        language.open(url: reader.root.appendingPathComponent(path), text: source, root: reader.root)
+    }
+
+    private func refreshLanguageStatus() {
+        guard let path = workspace.editor.activePath else { workspace.status.language.stringValue = ""; return }
+        workspace.status.language.stringValue = language.supports(path) ? languageStatus : path.hasSuffix(".py") ? "Python · Text preview" : "UTF-8"
     }
 
     @objc func openFolder() {
@@ -158,41 +223,49 @@ final class WorkspaceController: NSViewController {
         if let state = session.state { workspace.explorer.show(state, changesOnly: changes) }
     }
 
-    func openFile(_ path: String, diff: Bool, comparison: GitComparison = .workingTree, line: Int? = nil, character: Int = 0, highlightDestination: Bool = false) {
+    func openFile(_ path: String, diff: Bool, comparison: GitComparison = .workingTree, line: Int? = nil, character: Int = 0, highlightDestination: Bool = false, editor: EditorView? = nil) {
         guard let state = session.state, !session.isSwitching else { return }
+        let editor = editor ?? workspace.editor
         inspectToken = UUID()
         inspection.dismiss()
-        workspace.editor.prepare(path: path, diff: diff, isGit: state.isGit, comparison: comparison)
-        loadFile(path, diff: workspace.editor.showingDiff, comparison: comparison, position: line.map { ($0, character) }, highlightDestination: highlightDestination)
+        editor.prepare(path: path, diff: diff, isGit: state.isGit, comparison: comparison)
+        refreshLanguageStatus()
+        loadFile(path, diff: editor.showingDiff, comparison: comparison, position: line.map { ($0, character) }, highlightDestination: highlightDestination, editor: editor)
     }
 
-    private func loadFile(_ path: String, diff: Bool, comparison: GitComparison = .workingTree, preserveScroll: Bool = false, position: (Int, Int)? = nil, highlightDestination: Bool = false) {
-        session.read(path, diff: diff, comparison: comparison) { [weak self] result in
-            guard let self else { return }
+    private func loadFile(_ path: String, diff: Bool, comparison: GitComparison = .workingTree, preserveScroll: Bool = false, position: (Int, Int)? = nil, highlightDestination: Bool = false, editor: EditorView) {
+        session.read(path, diff: diff, comparison: comparison, scope: editor.readingID) { [weak self, weak editor] result in
+            guard let self, let editor, self.workspace.editorGroups.editors.contains(where: { $0 === editor }) else { return }
             switch result {
             case .success(let snapshot):
-                self.workspace.editor.show(snapshot, diff: diff, preserveScroll: preserveScroll, position: position, highlightDestination: highlightDestination)
+                editor.show(snapshot, diff: diff, preserveScroll: preserveScroll, position: position, highlightDestination: highlightDestination)
                 if let reader = self.session.reader, snapshot.message == nil, self.language.supports(path), FileManager.default.fileExists(atPath: reader.root.appendingPathComponent(path).path) {
                     self.language.open(url: reader.root.appendingPathComponent(path), text: snapshot.after, root: reader.root)
                 } else {
-                    self.workspace.status.language.stringValue = path.hasSuffix(".py") ? "Python · Text preview" : "UTF-8"
+                    if self.workspace.editor === editor { self.refreshLanguageStatus() }
                 }
-            case .failure(let error): self.workspace.editor.showError(error)
+                if self.view.window?.firstResponder === editor {
+                    self.view.window?.makeFirstResponder(editor.showingMarkdownPreview ? editor.markdown.text : editor.right.text)
+                }
+            case .failure(let error): editor.showError(error)
             }
         }
     }
 
-    private func inspect(index: Int, kind: String) {
-        guard let kind = InspectionKind(rawValue: kind), let root = session.reader?.root, let path = workspace.editor.activePath, language.supports(path), let position = workspace.editor.right.position(at: index) else { return }
+    private func inspect(index: Int, kind: String, editor: EditorView) {
+        guard let kind = InspectionKind(rawValue: kind), let root = session.reader?.root, let path = editor.activePath, language.supports(path), let position = editor.right.position(at: index) else { return }
         if kind == .hover {
             guard historyPicker == nil, picker?.isShown != true, view.window?.attachedSheet == nil else { return }
         }
         if kind == .hover { hoverRequest = UUID() } else { inspectToken = UUID() }
+        inspectionEditor = editor
+        syncLanguage(for: editor)
         let token = inspectToken
         let hoverToken = hoverRequest
         if kind == .references { workspace.status.message.stringValue = "Finding references…"; inspection.dismiss() }
-        language.inspect(url: root.appendingPathComponent(path), line: position.line, character: position.character, kind: kind) { [weak self] result in
-            guard let self, self.inspectToken == token, self.workspace.editor.activePath == path,
+        language.inspect(url: root.appendingPathComponent(path), line: position.line, character: position.character, kind: kind) { [weak self, weak editor] result in
+            guard let self, let editor, self.inspectToken == token, self.inspectionEditor === editor, editor.activePath == path,
+                  self.workspace.editorGroups.editors.contains(where: { $0 === editor }),
                   kind != .hover || self.hoverRequest == hoverToken else { return }
             switch result {
             case .failure(let error): if kind != .hover { self.workspace.status.message.stringValue = error.localizedDescription }
@@ -200,20 +273,22 @@ final class WorkspaceController: NSViewController {
                 if kind == .references, case .locations(let locations) = value {
                     self.workspace.status.message.stringValue = "\(Set(locations).count) references"
                 }
-                let lines = self.workspace.editor.right.lines.filter { $0.number != nil }.map(\.text)
-                self.inspection.show(value, kind: kind, index: index, textView: self.workspace.editor.right.text, root: root, currentDocument: (root.appendingPathComponent(path), lines))
+                let lines = editor.right.lines.filter { $0.number != nil }.map(\.text)
+                self.inspection.show(value, kind: kind, index: index, textView: editor.right.text, root: root, currentDocument: (root.appendingPathComponent(path), lines))
             }
         }
     }
 
-    private func querySymbol(index: Int, kind: InspectionKind, completion: @escaping (LanguageInspection?) -> Void) {
+    private func querySymbol(index: Int, kind: InspectionKind, editor: EditorView, completion: @escaping (LanguageInspection?) -> Void) {
         guard historyPicker == nil, picker?.isShown != true, view.window?.attachedSheet == nil,
-              !session.isSwitching, let root = session.reader?.root, let path = workspace.editor.activePath,
-              language.supports(path), let position = workspace.editor.right.position(at: index) else { completion(nil); return }
-        let source = workspace.editor.right.text.string
-        language.inspect(url: root.appendingPathComponent(path), line: position.line, character: position.character, kind: kind) { [weak self] result in
-            guard let self, self.session.reader?.root == root, self.workspace.editor.activePath == path,
-                  self.workspace.editor.right.text.string == source, !self.session.isSwitching else { completion(nil); return }
+              !session.isSwitching, let root = session.reader?.root, let path = editor.activePath,
+              language.supports(path), let position = editor.right.position(at: index) else { completion(nil); return }
+        let source = editor.right.text.string
+        syncLanguage(for: editor)
+        language.inspect(url: root.appendingPathComponent(path), line: position.line, character: position.character, kind: kind) { [weak self, weak editor] result in
+            guard let self, let editor, self.session.reader?.root == root, editor.activePath == path,
+                  editor.right.text.string == source, !self.session.isSwitching,
+                  self.workspace.editorGroups.editors.contains(where: { $0 === editor }) else { completion(nil); return }
             switch result {
             case .success(let value): completion(value)
             case .failure(let error):
@@ -238,7 +313,12 @@ final class WorkspaceController: NSViewController {
         workspace.explorer.select(relative)
     }
 
-    @objc func closeTab() { if !workspace.editor.closeActiveTab() { view.window?.performClose(nil) } }
+    @objc func closeTab() {
+        guard !workspace.editor.closeActiveTab() else { return }
+        if workspace.editorGroups.editors.count == 2 { workspace.editorGroups.close(workspace.editor) }
+        else { view.window?.performClose(nil) }
+    }
+    @objc func splitEditorRight() { workspace.editorGroups.splitActiveEditor() }
     @objc func nextChange() { workspace.editor.navigateChange(forward: true) }
     @objc func previousChange() { workspace.editor.navigateChange(forward: false) }
     @objc func showBranches() { showPicker(.branches, anchor: workspace.header.branchButton) }
@@ -361,7 +441,7 @@ final class WorkspaceController: NSViewController {
         session.invalidateDocument()
         inspection.dismiss()
         language.stop()
-        workspace.editor.reset()
+        workspace.editorGroups.reset()
         workspace.status.language.stringValue = ""
     }
     private func dismissCodeHover() {

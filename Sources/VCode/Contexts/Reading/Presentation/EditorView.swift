@@ -1,11 +1,14 @@
 import AppKit
 
 final class EditorView: NSView, NSSplitViewDelegate {
+    let readingID = UUID()
     let left = CodePane()
     let right = CodePane()
     let breadcrumbs = EditorBreadcrumbs()
     let welcome = WelcomeView()
     let markdown = MarkdownPreview()
+    let splitEditorButton = Theme.button("rectangle.split.2x1", tooltip: "Split Editor Right (⌘\\)", target: nil, action: nil)
+    let closeGroupButton = Theme.button("xmark", tooltip: "Close editor group", target: nil, action: nil)
     private let tabs = EditorTabs()
     private let split = ReadingSplitView()
     private let message = Theme.label("", size: 13, color: Theme.muted)
@@ -18,6 +21,13 @@ final class EditorView: NSView, NSSplitViewDelegate {
     private(set) var showingDiff = false
     var activeComparison: GitComparison? { session.activeDocument?.comparison }
     var activePath: String? { session.activePath }
+    var currentSource: String? {
+        guard let snapshot, snapshot.path == activePath,
+              snapshot.comparison == activeComparison || snapshot.comparison == nil else { return nil }
+        return snapshot.after
+    }
+    var onSplitEditor: (() -> Void)?
+    var onCloseGroup: (() -> Void)?
     var onSelectFile: ((String, GitComparison?) -> Void)?
     var onLastTabClosed: (() -> Void)?
     var onOpenFolder: (() -> Void)?
@@ -32,9 +42,18 @@ final class EditorView: NSView, NSSplitViewDelegate {
         split.addArrangedSubview(right)
         message.alignment = .center
         message.maximumNumberOfLines = 3
-        add(tabs, breadcrumbs, split, markdown, message, welcome)
+        let groupActions = NSStackView(views: [splitEditorButton, closeGroupButton])
+        groupActions.orientation = .horizontal
+        groupActions.spacing = 4
+        groupActions.alignment = .centerY
+        for button in [splitEditorButton, closeGroupButton] {
+            button.widthAnchor.constraint(equalToConstant: 28).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        }
+        add(tabs, breadcrumbs, split, markdown, message, welcome, groupActions)
         NSLayoutConstraint.activate([
-            tabs.topAnchor.constraint(equalTo: topAnchor), tabs.leadingAnchor.constraint(equalTo: leadingAnchor), tabs.trailingAnchor.constraint(equalTo: trailingAnchor), tabs.heightAnchor.constraint(equalToConstant: 40),
+            tabs.topAnchor.constraint(equalTo: topAnchor), tabs.leadingAnchor.constraint(equalTo: leadingAnchor), tabs.trailingAnchor.constraint(equalTo: groupActions.leadingAnchor, constant: -4), tabs.heightAnchor.constraint(equalToConstant: 40),
+            groupActions.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8), groupActions.topAnchor.constraint(equalTo: topAnchor, constant: 8), groupActions.heightAnchor.constraint(equalToConstant: 32),
             breadcrumbs.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 4), breadcrumbs.leadingAnchor.constraint(equalTo: leadingAnchor), breadcrumbs.trailingAnchor.constraint(equalTo: trailingAnchor), breadcrumbs.heightAnchor.constraint(equalToConstant: 28),
             split.topAnchor.constraint(equalTo: breadcrumbs.bottomAnchor, constant: 4), split.leadingAnchor.constraint(equalTo: leadingAnchor), split.trailingAnchor.constraint(equalTo: trailingAnchor), split.bottomAnchor.constraint(equalTo: bottomAnchor),
             markdown.topAnchor.constraint(equalTo: split.topAnchor), markdown.leadingAnchor.constraint(equalTo: split.leadingAnchor), markdown.trailingAnchor.constraint(equalTo: split.trailingAnchor), markdown.bottomAnchor.constraint(equalTo: split.bottomAnchor),
@@ -42,6 +61,10 @@ final class EditorView: NSView, NSSplitViewDelegate {
             welcome.topAnchor.constraint(equalTo: topAnchor), welcome.leadingAnchor.constraint(equalTo: leadingAnchor), welcome.trailingAnchor.constraint(equalTo: trailingAnchor), welcome.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
         tabs.onSelect = { [weak self] document in self?.onSelectFile?(document.path, document.comparison) }
+        splitEditorButton.target = self; splitEditorButton.action = #selector(splitEditor)
+        closeGroupButton.target = self; closeGroupButton.action = #selector(closeGroup)
+        configureGroup(split: false, focused: true)
+        splitEditorButton.isEnabled = false
         tabs.onClose = { [weak self] document in self?.close(document) }
         tabs.onCloseGroup = { [weak self] document, scope in
             guard let self else { return }
@@ -60,8 +83,18 @@ final class EditorView: NSView, NSSplitViewDelegate {
         reset()
     }
     required init?(coder: NSCoder) { fatalError() }
+    override var acceptsFirstResponder: Bool { true }
 
-    func setWorkspaceOpen(_ open: Bool) { welcome.show(hasWorkspace: open) }
+    func setWorkspaceOpen(_ open: Bool) { welcome.show(hasWorkspace: open); splitEditorButton.isEnabled = open }
+
+    func configureGroup(split: Bool, focused: Bool) {
+        splitEditorButton.isHidden = split
+        closeGroupButton.isHidden = !split
+        tabs.setGroupFocused(focused)
+    }
+
+    @objc private func splitEditor() { onSplitEditor?() }
+    @objc private func closeGroup() { onCloseGroup?() }
 
     func prepare(path: String, diff: Bool, isGit: Bool, comparison: GitComparison = .workingTree) {
         right.text.cancelNavigationFlash()
