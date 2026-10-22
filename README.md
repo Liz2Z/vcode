@@ -81,11 +81,13 @@ UI 需求与预期见 [tests/ui/README.md](tests/ui/README.md)。每次推送前
 
 推送任意分支或标签后，GitHub Actions 的 **Build macOS arm64** 自动运行测试，再构建 Apple Silicon（M 系列芯片）版本。也可以在 Actions 页面选择 **Run workflow** 手动运行。
 
-构建成功后，进入对应运行记录的 **Artifacts**，下载 `VCode-macos-arm64-<提交 SHA>`。其中包含 ZIP、DMG 和 `SHA256SUMS.txt`；DMG 打开后将 VCode 拖到 Applications，ZIP 解压后同样得到 `VCode.app`。应用内已包含 arm64 Node 和 TypeScript 语言服务，目标电脑无需另装 Node。
+`main` 构建成功后，自动在仓库的 [Releases](https://github.com/Liz2Z/vcode/releases) 创建 **Pre-release**，附带 ZIP、DMG 和 `SHA256SUMS.txt`。每次使用独立标签 `preview-<运行编号>-<重跑次数>`，指向本次构建的完整提交 SHA，保留已有预览版；重跑也不会覆盖旧包。手动运行 main 的工作流同样发布预览版。
 
-工作流采用 macOS 26 arm64 runner，依赖按 lockfile 安装；测试失败不会上传安装包，失败日志单独保留。安装包保留 14 天，测试日志保留 7 天。CI 自动化不代替推送前的真实窗口 UI 验收。
+其他分支或标签只生成 Actions 产物：进入对应运行记录的 **Artifacts**，下载 `VCode-macos-arm64-<提交 SHA>`。DMG 打开后将 VCode 拖到 Applications，ZIP 解压后同样得到 `VCode.app`。应用内已包含 arm64 Node 和 TypeScript 语言服务，目标电脑无需另装 Node。
 
-当前产物仍是 ad-hoc 签名，未做 Apple Developer ID 签名或公证；下载到其他 Mac 后可能需要在系统“隐私与安全性”中确认打开。暂不自动创建 GitHub Release。
+工作流采用 macOS 26 arm64 runner，依赖按 lockfile 安装；测试、打包或产物校验失败不会发布 Release，失败日志单独保留。Actions 安装包保留 14 天，测试日志保留 7 天；Release 附件不受这两个保留期限制。仅发布任务获得仓库写权限，使用 GitHub 自动提供的工作流 token，不需要个人 token。CI 自动化不代替推送前的真实窗口 UI 验收。
+
+当前产物仍是 ad-hoc 签名，未做 Apple Developer ID 签名或公证；下载到其他 Mac 后可能需要在系统“隐私与安全性”中确认打开。
 
 本地也可以在构建后生成相同的 arm64 安装包：
 

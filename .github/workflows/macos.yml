@@ -83,3 +83,48 @@ jobs:
           path: .build/ci-results/swift-test.log
           if-no-files-found: ignore
           retention-days: 7
+
+  publish-preview:
+    name: Publish preview release
+    needs: build
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: VCode-macos-arm64-${{ github.sha }}
+          path: release-assets
+
+      - name: Create preview release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_TAG: preview-${{ github.run_number }}-${{ github.run_attempt }}
+        run: |
+          cd release-assets
+          sha256sum --check SHA256SUMS.txt
+          notes="$RUNNER_TEMP/vcode-release-notes.md"
+          cat > "$notes" <<EOF
+          Automated Apple Silicon preview from main.
+
+          Commit: $RELEASE_SHA
+          Build: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          Download the DMG and drag VCode into Applications, or extract the ZIP.
+          The app includes arm64 Node.js and the TypeScript language service.
+          This preview uses ad-hoc signing and is not notarized by Apple.
+          EOF
+          gh release create "$RELEASE_TAG" \
+            VCode-macos-arm64.zip VCode-macos-arm64.dmg SHA256SUMS.txt \
+            --target "$RELEASE_SHA" \
+            --title "Preview $RELEASE_TAG (${RELEASE_SHA:0:7})" \
+            --prerelease --latest=false \
+            --notes-file "$notes"
+          printf 'Preview release: %s/%s/releases/tag/%s\n' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
