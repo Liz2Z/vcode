@@ -43,6 +43,14 @@ final class EditorView: NSView, NSSplitViewDelegate {
         ])
         tabs.onSelect = { [weak self] document in self?.onSelectFile?(document.path, document.comparison) }
         tabs.onClose = { [weak self] document in self?.close(document) }
+        tabs.onCloseGroup = { [weak self] document, scope in
+            guard let self else { return }
+            self.finishClosing(self.session.close(scope, relativeTo: document))
+        }
+        tabs.onMove = { [weak self] document, index in
+            guard let self, self.session.move(document, to: index) else { return }
+            self.tabs.show(self.session, revealActive: false)
+        }
         welcome.openButton.target = self; welcome.openButton.action = #selector(openFolder)
         breadcrumbs.sourceButton.target = self; breadcrumbs.sourceButton.action = #selector(showMarkdownSource)
         breadcrumbs.previewButton.target = self; breadcrumbs.previewButton.action = #selector(showMarkdownPreview)
@@ -158,7 +166,9 @@ final class EditorView: NSView, NSSplitViewDelegate {
         return true
     }
     private func close(_ document: ReadingDocument) {
-        let wasActive = session.close(document)
+        finishClosing(session.close(document))
+    }
+    private func finishClosing(_ wasActive: Bool) {
         tabs.show(session)
         guard wasActive else { return }
         snapshot = nil
