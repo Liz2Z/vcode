@@ -28,7 +28,7 @@ final class WorkspaceView: NSView, NSSplitViewDelegate {
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: topAnchor), header.leadingAnchor.constraint(equalTo: leadingAnchor), header.trailingAnchor.constraint(equalTo: trailingAnchor), header.heightAnchor.constraint(equalToConstant: 56),
             split.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.Layout.inset), split.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.Layout.inset), split.topAnchor.constraint(equalTo: header.bottomAnchor), split.bottomAnchor.constraint(equalTo: status.topAnchor),
-            sidebar.widthAnchor.constraint(greaterThanOrEqualToConstant: 208), editor.widthAnchor.constraint(greaterThanOrEqualToConstant: 560),
+            sidebar.widthAnchor.constraint(greaterThanOrEqualToConstant: WorkspaceSplitView.minimumSidebarWidth), editor.widthAnchor.constraint(greaterThanOrEqualToConstant: WorkspaceSplitView.minimumEditorWidth),
             status.leadingAnchor.constraint(equalTo: leadingAnchor), status.trailingAnchor.constraint(equalTo: trailingAnchor), status.bottomAnchor.constraint(equalTo: bottomAnchor), status.heightAnchor.constraint(equalToConstant: 32)
         ])
         DispatchQueue.main.async { [weak self] in self?.split.setPosition(240, ofDividerAt: 0) }
@@ -43,20 +43,21 @@ final class WorkspaceView: NSView, NSSplitViewDelegate {
         status.message.stringValue = "\(state.files.count) files  ·  \(state.changes.count) changes  ·  Read Only"
     }
 
-    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { 208 }
-    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { min(360, splitView.bounds.width - 572) }
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { WorkspaceSplitView.minimumSidebarWidth }
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        max(WorkspaceSplitView.minimumSidebarWidth, splitView.bounds.width - splitView.dividerThickness - WorkspaceSplitView.minimumEditorWidth)
+    }
 
     func splitView(_ splitView: NSSplitView, resizeSubviewsWithOldSize oldSize: NSSize) {
         guard splitView.arrangedSubviews.count == 2 else { return }
         let sidebar = splitView.arrangedSubviews[0]
-        let maximum = min(360, max(208, splitView.bounds.width - 572))
-        let width = min(maximum, max(208, oldSize.width == 0 ? 240 : sidebar.frame.width))
+        let maximum = self.splitView(splitView, constrainMaxCoordinate: splitView.bounds.width, ofSubviewAt: 0)
+        let width = min(maximum, max(WorkspaceSplitView.minimumSidebarWidth, oldSize.width == 0 ? 240 : sidebar.frame.width))
         sidebar.frame = NSRect(x: 0, y: 0, width: width, height: splitView.bounds.height)
         editor.frame = NSRect(x: width + splitView.dividerThickness, y: 0, width: max(0, splitView.bounds.width - width - splitView.dividerThickness), height: splitView.bounds.height)
     }
-}
 
-private final class WorkspaceSplitView: NSSplitView {
-    override var dividerThickness: CGFloat { Theme.Layout.moduleGap }
-    override var dividerColor: NSColor { Theme.canvas }
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        (notification.object as? WorkspaceSplitView)?.updateTrackingAreas()
+    }
 }
