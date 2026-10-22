@@ -1,0 +1,85 @@
+name: Build macOS arm64
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and package Apple Silicon
+    runs-on: macos-26
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Isolate application storage
+        run: |
+          printf '%s\n' \
+            "XDG_STATE_HOME=$RUNNER_TEMP/vcode/state" \
+            "XDG_CONFIG_HOME=$RUNNER_TEMP/vcode/config" \
+            "XDG_DATA_HOME=$RUNNER_TEMP/vcode/data" \
+            "XDG_CACHE_HOME=$RUNNER_TEMP/vcode/cache" >> "$GITHUB_ENV"
+
+      - name: Set up arm64 Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.22.2
+          architecture: arm64
+          cache: npm
+          cache-dependency-path: Tools/TypeScript/package-lock.json
+
+      - name: Verify toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(node -p 'process.arch')" = arm64
+          xcodebuild -version
+          /usr/bin/swift --version
+
+      - name: Install language service
+        run: npm ci --prefix Tools/TypeScript --ignore-scripts --registry=https://registry.npmjs.org --no-audit --no-fund
+
+      - name: Run automated tests
+        run: |
+          mkdir -p .build/ci-results
+          set -o pipefail
+          /usr/bin/swift test 2>&1 | tee .build/ci-results/swift-test.log
+
+      - name: Build app
+        run: bash scripts/build.sh
+
+      - name: Package and verify arm64 app
+        run: bash scripts/package-macos.sh
+
+      - name: Upload installable packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: VCode-macos-arm64-${{ github.sha }}
+          path: |
+            dist/VCode-macos-arm64.zip
+            dist/VCode-macos-arm64.dmg
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload test log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: test-log-macos-arm64-${{ github.sha }}
+          path: .build/ci-results/swift-test.log
+          if-no-files-found: ignore
+          retention-days: 7
