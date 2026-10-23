@@ -41,6 +41,10 @@ final class EditorGroupsView: NSView, NSSplitViewDelegate {
                 if let view = window.firstResponder as? NSView,
                    let editor = self.editors.first(where: { view === $0 || view.isDescendant(of: $0) }) { self.activate(editor) }
             } else {
+                // Floating content belongs to the group host, not the reading
+                // split. Clicking it must not switch the active editor below it.
+                guard let parent = self.superview, let hit = self.hitTest(parent.convert(event.locationInWindow, from: nil)),
+                      hit === self.split || hit.isDescendant(of: self.split) else { return event }
                 let point = self.split.convert(event.locationInWindow, from: nil)
                 if let editor = self.editors.first(where: { $0.frame.contains(point) }) { self.activate(editor) }
             }

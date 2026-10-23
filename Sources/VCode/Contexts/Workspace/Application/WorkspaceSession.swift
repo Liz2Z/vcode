@@ -15,7 +15,7 @@ final class WorkspaceSession {
     private var refreshAgain = false
     private(set) var isSwitching = false
 
-    func open(_ folder: URL) {
+    func open(_ folder: URL, completion: ((Result<WorkspaceState, Error>) -> Void)? = nil) {
         generation = UUID()
         invalidateDocument()
         watcher = nil
@@ -35,7 +35,8 @@ final class WorkspaceSession {
                     self.state = state
                     self.watch(state)
                     self.onOpen?(state)
-                case .failure(let error): self.onError?(error)
+                    completion?(.success(state))
+                case .failure(let error): self.onError?(error); completion?(.failure(error))
                 }
             }
         }

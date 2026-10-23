@@ -18,6 +18,10 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     private var readingObservers: [NSObjectProtocol] = []
     private var readingStateReady = false
     private var treeSessions: [String: FileTreeReadingState] = [:]
+    private var externalURLs: [URL] = []
+    private var externalOpenBusy = false
+    private var externalOpenToken = UUID()
+    private var externalOpenFailures: [ExternalOpenNotice.Failure] = []
     private let history: WorkspaceHistoryStore
     private var historyPicker: WorkspaceHistoryPicker?
     private var historyMonitor: Any?
@@ -68,6 +72,10 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     }
 
     private func configureActions() {
+        workspace.openNotice.onDismiss = { [weak self] in
+            self?.externalOpenFailures = []
+            self?.workspace.dismissOpenNotice()
+        }
         history.onError = { [weak self] message in
             self?.workspace.status.message.stringValue = message
             self?.workspace.status.message.toolTip = message
@@ -298,6 +306,11 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     func open(_ folder: URL) {
         guard !session.isSwitching else { return }
+        cancelExternalOpen()
+        openWorkspace(folder)
+    }
+
+    private func openWorkspace(_ folder: URL, completion: ((Result<WorkspaceState, Error>) -> Void)? = nil) {
         saveReadingSession()
         readingStateReady = false
         dismissShortcuts()
@@ -312,7 +325,73 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         language.stop()
         workspace.status.message.stringValue = "Opening folder…"
         workspace.editorGroups.editors.forEach { $0.allowsNavigation = false }
-        session.open(folder)
+        session.open(folder, completion: completion)
+    }
+
+    func openExternal(_ urls: [URL]) {
+        externalURLs.append(contentsOf: urls)
+        processExternalOpen()
+    }
+
+    private func cancelExternalOpen() {
+        externalOpenToken = UUID(); externalURLs = []; externalOpenBusy = false
+        externalOpenFailures = []
+        workspace.dismissOpenNotice()
+    }
+
+    private func processExternalOpen() {
+        guard !externalOpenBusy, !session.isSwitching, !externalURLs.isEmpty else { return }
+        externalOpenBusy = true
+        let url = externalURLs.removeFirst(), token = externalOpenToken
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { try ExternalOpenResolver.resolve(url) }
+            DispatchQueue.main.async {
+                guard let self, self.externalOpenToken == token else { return }
+                switch result {
+                case .failure(let error):
+                    self.recordExternalOpenFailure(url, error: error)
+                    self.finishExternalOpen()
+                case .success(let target):
+                    if let state = self.session.state, state.root.path == target.root.path {
+                        self.showExternalDocument(target, in: state)
+                        self.finishExternalOpen()
+                    } else {
+                        self.openWorkspace(target.root) { [weak self] result in
+                            guard let self, self.externalOpenToken == token else { return }
+                            switch result {
+                            case .success(let state): self.showExternalDocument(target, in: state)
+                            case .failure(let error): self.recordExternalOpenFailure(url, error: error)
+                            }
+                            self.finishExternalOpen()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func showExternalDocument(_ target: ExternalOpenTarget, in state: WorkspaceState) {
+        guard let path = target.relativePath(in: state.root) else { return }
+        openFile(path, diff: false)
+        workspace.editorGroups.activate(workspace.editor, focus: true)
+    }
+
+    private func finishExternalOpen() {
+        externalOpenBusy = false
+        processExternalOpen()
+        presentExternalOpenFailures()
+    }
+
+    private func recordExternalOpenFailure(_ url: URL, error: Error) {
+        workspace.status.message.stringValue = "Cannot open \(url.lastPathComponent): \(error.localizedDescription)"
+        let failure = ExternalOpenNotice.Failure(url: url, reason: error.localizedDescription)
+        if !externalOpenFailures.contains(failure) { externalOpenFailures.append(failure) }
+    }
+
+    private func presentExternalOpenFailures() {
+        guard !externalOpenBusy, externalURLs.isEmpty, !externalOpenFailures.isEmpty else { return }
+        workspace.showOpenNotice(externalOpenFailures)
+        view.window?.makeKeyAndOrderFront(nil)
     }
     @objc func refresh() { session.refresh() }
     @objc func showFiles() { changeSidebar(false) }
@@ -618,6 +697,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     func activate(_ destination: GitDestination, completion: @escaping (Result<WorkspaceState, Error>) -> Void) {
         guard !session.isSwitching, session.reader != nil else { return }
+        cancelExternalOpen()
         saveReadingSession()
         readingStateReady = false
         dismissShortcuts()
@@ -637,6 +717,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             self?.readingStateReady = self?.displayedState != nil
             self?.workspace.editorGroups.editors.forEach { $0.allowsNavigation = true }
             self?.workspace.header.setBusy(false)
+            self?.processExternalOpen()
             self?.workspace.navigation.search.isEnabled = self?.session.state != nil
             self?.workspace.explorer.outline.isEnabled = true
             if case .failure(let error) = result { self?.workspace.status.message.stringValue = error.localizedDescription }
@@ -658,6 +739,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         inspection.dismissHover()
     }
     func shutdown() {
+        cancelExternalOpen()
         saveReadingSession()
         readingStateReady = false
         dismissShortcuts(); cancelShortcutChord()

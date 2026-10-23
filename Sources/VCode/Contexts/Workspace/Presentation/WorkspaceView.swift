@@ -8,8 +8,10 @@ final class WorkspaceView: NSView, NSSplitViewDelegate {
     let navigation = WorkspaceNavigation()
     let status = WorkspaceStatus()
     let searchHost = NSView()
+    let openNotice = ExternalOpenNotice()
     private let split = WorkspaceSplitView()
     private var editorMinimumWidth: NSLayoutConstraint!
+    private weak var noticePreviousFocus: NSResponder?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -30,6 +32,9 @@ final class WorkspaceView: NSView, NSSplitViewDelegate {
         split.addArrangedSubview(editorGroups)
         split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         add(header, split, status)
+        editorGroups.add(openNotice)
+        Theme.pin(openNotice, to: editorGroups)
+        openNotice.isHidden = true
         editorMinimumWidth = editorGroups.widthAnchor.constraint(greaterThanOrEqualToConstant: editorGroups.minimumWidth)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: topAnchor), header.leadingAnchor.constraint(equalTo: leadingAnchor), header.trailingAnchor.constraint(equalTo: trailingAnchor), header.heightAnchor.constraint(equalToConstant: 56),
@@ -49,6 +54,25 @@ final class WorkspaceView: NSView, NSSplitViewDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     var sidebarWidth: Double { Double(split.arrangedSubviews[0].frame.width) }
+
+    func showOpenNotice(_ failures: [ExternalOpenNotice.Failure]) {
+        if openNotice.isHidden { noticePreviousFocus = window?.firstResponder }
+        openNotice.show(failures, empty: editorGroups.editors.allSatisfy { $0.activePath == nil })
+        openNotice.isHidden = false
+        if window?.attachedSheet == nil { window?.makeFirstResponder(openNotice) }
+    }
+
+    func dismissOpenNotice() {
+        guard !openNotice.isHidden else { return }
+        let restoreFocus = (window?.firstResponder as? NSView).map { $0 === openNotice || $0.isDescendant(of: openNotice) } ?? false
+        openNotice.isHidden = true
+        if restoreFocus {
+            if let previous = noticePreviousFocus as? NSView, previous.window === window, !previous.isHiddenOrHasHiddenAncestor {
+                window?.makeFirstResponder(previous)
+            } else { editorGroups.activate(editor, focus: true) }
+        }
+        noticePreviousFocus = nil
+    }
 
     func restoreSidebarWidth(_ width: Double) {
         guard width.isFinite else { return }

@@ -13,6 +13,55 @@
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Source Code and Scripts</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>ts</string><string>tsx</string><string>mts</string><string>cts</string>
+                <string>js</string><string>jsx</string><string>mjs</string><string>cjs</string>
+                <string>py</string><string>pyi</string><string>pyw</string>
+                <string>swift</string><string>m</string><string>mm</string>
+                <string>c</string><string>h</string><string>cc</string><string>cpp</string><string>cxx</string><string>hpp</string><string>hxx</string>
+                <string>rs</string><string>go</string><string>java</string><string>kt</string><string>kts</string>
+                <string>cs</string><string>fs</string><string>fsx</string><string>vb</string>
+                <string>rb</string><string>php</string><string>pl</string><string>pm</string><string>lua</string><string>r</string><string>dart</string><string>scala</string>
+                <string>sh</string><string>bash</string><string>zsh</string><string>fish</string><string>ps1</string><string>bat</string><string>cmd</string>
+                <string>html</string><string>htm</string><string>css</string><string>scss</string><string>sass</string><string>less</string>
+                <string>vue</string><string>svelte</string><string>astro</string><string>sql</string><string>graphql</string><string>gql</string><string>proto</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>Developer Configuration and Text</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>json</string><string>jsonc</string><string>json5</string><string>jsonl</string><string>ndjson</string>
+                <string>yaml</string><string>yml</string><string>toml</string><string>xml</string><string>plist</string>
+                <string>ini</string><string>cfg</string><string>conf</string><string>config</string><string>properties</string><string>env</string><string>lock</string>
+                <string>md</string><string>markdown</string><string>mdx</string><string>rst</string><string>txt</string><string>text</string><string>log</string>
+                <string>csv</string><string>tsv</string><string>diff</string><string>patch</string>
+                <string>gitignore</string><string>gitattributes</string><string>gitmodules</string><string>gitconfig</string><string>editorconfig</string><string>npmrc</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>Text Documents</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array><string>public.text</string><string>public.source-code</string><string>public.script</string></array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>Project Folder</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key><array><string>public.folder</string></array>
+        </dict>
+    </array>
     <key>NSHumanReadableCopyright</key><string>VCode — Native code and diff viewer.</string>
 </dict>
 </plist>

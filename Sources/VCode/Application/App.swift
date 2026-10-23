@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let history = WorkspaceHistoryStore()
     private var windowSave: DispatchWorkItem?
     private lazy var resourceUsage = ResourceUsageWindowController()
+    private var pendingExternalURLs: [URL] = []
+    private var readyForDocuments = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -46,9 +48,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         buildMenu()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        let arguments = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
-        if let path = arguments.first {
-            workspace.open(URL(fileURLWithPath: path, isDirectory: true))
+        readyForDocuments = true
+        let arguments = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }.map { URL(fileURLWithPath: $0) }
+        if !pendingExternalURLs.isEmpty {
+            let urls = pendingExternalURLs; pendingExternalURLs = []
+            workspace.openExternal(urls)
+        } else if !arguments.isEmpty {
+            workspace.openExternal(arguments)
         } else if let root = history.lastFolder, history.isAvailable(root) {
             workspace.open(root)
         }
@@ -69,7 +75,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let frame = window?.frame, window?.styleMask.contains(.fullScreen) != true else { return }
         history.saveWindow(WindowPlacement(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height))
     }
-    func application(_ sender: NSApplication, openFile filename: String) -> Bool { workspace?.open(URL(fileURLWithPath: filename)); return true }
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        receiveDocuments(filenames.map { URL(fileURLWithPath: $0) })
+        sender.reply(toOpenOrPrint: .success)
+    }
+    func application(_ application: NSApplication, open urls: [URL]) { receiveDocuments(urls) }
+
+    private func receiveDocuments(_ urls: [URL]) {
+        guard readyForDocuments else { pendingExternalURLs.append(contentsOf: urls); return }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        workspace.openExternal(urls)
+    }
 
     @objc private func showResourceUsage() { resourceUsage.showWindow(nil) }
 
