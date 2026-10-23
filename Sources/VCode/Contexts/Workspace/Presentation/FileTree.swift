@@ -59,7 +59,7 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     let heading = Theme.label("FILES", size: 10, color: Theme.muted, weight: .semibold)
     let count = Theme.label("", size: 10, color: Theme.muted)
     let emptyLabel = Theme.label("Open a folder to get started", color: Theme.muted)
-    let filter = NSSearchField()
+    let filter = Theme.searchField()
     var onSelect: ((String, GitComparison?) -> Void)?
     var onReveal: ((String) -> Void)?
     private let root = FileNode(name: "", path: "", directory: true)

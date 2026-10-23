@@ -13,7 +13,7 @@ final class GitDestinationPicker: NSViewController, NSTableViewDataSource, NSTab
     var onChoose: ((GitDestination) -> Void)?
     var onRefresh: (() -> Void)?
     let kind: Kind
-    let filter = NSSearchField()
+    let filter = Theme.searchField()
     let table = NSTableView()
     let action = Theme.actionButton("Switch", symbol: "arrow.right")
     private let refresh = Theme.button("arrow.clockwise", tooltip: "Refresh list", target: nil, action: nil)

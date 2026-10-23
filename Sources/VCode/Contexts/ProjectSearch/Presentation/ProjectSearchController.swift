@@ -2,8 +2,8 @@ import AppKit
 
 final class ProjectSearchController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     enum Row { case file(String, Int), match(ProjectSearchMatch) }
-    let query = NSSearchField()
-    let exclusions = NSTextField()
+    let query = Theme.searchField()
+    let exclusions = Theme.textField()
     let caseButton = Theme.actionButton("Aa"), wordButton = Theme.actionButton("ab"), regexButton = Theme.actionButton(".*")
     let status = NSTextField(wrappingLabelWithString: "Search the project")
     let table = ResultTableView()

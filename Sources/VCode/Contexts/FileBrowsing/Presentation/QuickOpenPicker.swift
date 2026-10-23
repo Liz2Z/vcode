@@ -1,7 +1,7 @@
 import AppKit
 
 final class QuickOpenPicker: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
-    let filter = NSSearchField()
+    let filter = Theme.searchField()
     let table = ResultTableView()
     let summary = Theme.label("", size: 11, color: Theme.muted)
     private(set) var rows: [String] = []

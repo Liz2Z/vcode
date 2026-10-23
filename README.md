@@ -60,6 +60,7 @@ open dist/VCode.app --args /path/to/repository
 | 打开文件夹 | `⌘O` |
 | 快速打开文件 | `⌘P` |
 | 项目全文搜索 | `⌘⇧F` |
+| 快捷键列表 | `⌘K`，然后 `⌘S` |
 | 全部文件 / 改动文件 | `⌘1` / `⌘2` |
 | 刷新 | `⌘R` |
 | 关闭当前标签 | `⌘W` |
@@ -70,6 +71,8 @@ open dist/VCode.app --args /path/to/repository
 | 类型信息 | 悬停 |
 
 分支和 worktree 切换通过窗口顶部的对应按钮进入。
+
+按 `⌘K` 后在两秒内按 `⌘S`，或通过 View → Keyboard Shortcuts… 呼出快捷键列表；仅列出 VCode 功能快捷键和代码／列表交互，不列系统通用项。支持按操作名称、按键及修饰键搜索。Escape、关闭按钮或点击浮层外关闭，未打开项目时也可查阅。
 
 ## 本地开发
 

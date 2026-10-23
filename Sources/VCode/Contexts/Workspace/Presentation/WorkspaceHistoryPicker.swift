@@ -3,7 +3,7 @@ import AppKit
 final class WorkspaceHistoryPicker: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     enum Row { case project(RecentProject), workspace(RecentWorkspace) }
     var onChoose: ((URL) -> Void)?
-    let filter = NSSearchField()
+    let filter = Theme.searchField()
     let table = HistoryTableView()
     private let scroll = NSScrollView()
     private let empty = Theme.label("No recent projects yet", size: 12, color: Theme.muted)

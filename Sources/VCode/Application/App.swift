@@ -81,19 +81,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             main.addItem(item)
             return menu
         }
-        func item(_ menu: NSMenu, _ title: String, _ action: Selector, _ key: String, flags: NSEvent.ModifierFlags = .command, target: AnyObject? = nil) {
+        func item(_ menu: NSMenu, _ title: String, _ action: Selector, _ key: String, flags: NSEvent.ModifierFlags = .command, target: AnyObject? = nil, includeInShortcutList: Bool = true) {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
             item.keyEquivalentModifierMask = flags
             item.target = target
             menu.addItem(item)
+            if includeInShortcutList { KeyboardShortcutCatalog.register(item) }
         }
         let app = submenu("VCode")
         item(app, "About VCode", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "")
         item(app, "Resource Usage…", #selector(showResourceUsage), "", target: self)
         app.addItem(.separator())
-        item(app, "Hide VCode", #selector(NSApplication.hide(_:)), "h")
+        item(app, "Hide VCode", #selector(NSApplication.hide(_:)), "h", includeInShortcutList: false)
         app.addItem(.separator())
-        item(app, "Quit VCode", #selector(NSApplication.terminate(_:)), "q")
+        item(app, "Quit VCode", #selector(NSApplication.terminate(_:)), "q", includeInShortcutList: false)
         let file = submenu("File")
         item(file, "Open Folder…", #selector(WorkspaceController.openFolder), "o", target: workspace)
         item(file, "Quick Open…", #selector(WorkspaceController.showQuickOpen), "p", target: workspace)
@@ -101,8 +102,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         file.addItem(.separator())
         item(file, "Close Tab", #selector(WorkspaceController.closeTab), "w", target: workspace)
         let edit = submenu("Edit")
-        item(edit, "Copy", #selector(NSText.copy(_:)), "c")
-        item(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
+        item(edit, "Copy", #selector(NSText.copy(_:)), "c", includeInShortcutList: false)
+        item(edit, "Select All", #selector(NSText.selectAll(_:)), "a", includeInShortcutList: false)
         edit.addItem(.separator())
         item(edit, "Find in Project…", #selector(WorkspaceController.showProjectSearch), "f", flags: [.command, .shift], target: workspace)
         let view = submenu("View")
@@ -116,9 +117,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         view.addItem(.separator())
         item(view, "Next Change", #selector(WorkspaceController.nextChange), String(UnicodeScalar(NSDownArrowFunctionKey)!), flags: .option, target: workspace)
         item(view, "Previous Change", #selector(WorkspaceController.previousChange), String(UnicodeScalar(NSUpArrowFunctionKey)!), flags: .option, target: workspace)
+        view.addItem(.separator())
+        let shortcuts = NSMenuItem(title: "Keyboard Shortcuts…", action: #selector(WorkspaceController.showKeyboardShortcuts), keyEquivalent: "")
+        shortcuts.identifier = KeyboardShortcutCatalog.menuIdentifier
+        shortcuts.toolTip = "Keyboard Shortcuts (\(KeyboardShortcutCatalog.chord))"
+        shortcuts.target = workspace
+        view.addItem(shortcuts)
+        KeyboardShortcutCatalog.register(shortcuts)
         let window = submenu("Window")
-        item(window, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
-        item(window, "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", flags: [.command, .control])
+        item(window, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m", includeInShortcutList: false)
+        item(window, "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", flags: [.command, .control], includeInShortcutList: false)
         NSApp.mainMenu = main
         NSApp.windowsMenu = window
     }

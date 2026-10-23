@@ -43,6 +43,17 @@ enum Theme {
         return field
     }
 
+    /// Use AppKit's small-corner rectangular bezel for both search and text inputs.
+    /// Keeping the native cell preserves editing, search/cancel buttons and accessibility.
+    static func searchField() -> NSSearchField { inputField(InputSearchField()) }
+    static func textField() -> NSTextField { inputField(InputTextField()) }
+
+    private static func inputField<Field: NSTextField>(_ field: Field) -> Field {
+        field.isBezeled = true
+        field.bezelStyle = .squareBezel
+        return field
+    }
+
     static func button(_ symbol: String, tooltip: String, target: AnyObject?, action: Selector?) -> FeedbackButton {
         let button = FeedbackButton(frame: .zero)
         button.title = ""

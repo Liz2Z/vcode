@@ -20,6 +20,15 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     let projectSearch = ProjectSearchController()
     private(set) var quickOpen: QuickOpenPicker?
     private var quickOpenMonitor: Any?
+    private(set) var shortcutsPicker: KeyboardShortcutsController?
+    private var shortcutsMonitor: Any?
+    private var shortcutKeyMonitor: Any?
+    private var shortcutFocusObserver: NSObjectProtocol?
+    private var shortcutChord = KeyboardShortcutChord()
+    private var shortcutChordReset: DispatchWorkItem?
+    private var shortcutMessageBeforeChord: String?
+    private weak var shortcutPreviousFocus: NSView?
+    private let shortcutChordHint = "⌘K pressed · ⌘S: Keyboard Shortcuts · Esc: Cancel"
 
     init(history: WorkspaceHistoryStore = WorkspaceHistoryStore(), inspection: InspectionPresenter = InspectionPresenter()) {
         self.history = history
@@ -37,12 +46,17 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             projectSearch.view.topAnchor.constraint(equalTo: workspace.searchHost.topAnchor), projectSearch.view.bottomAnchor.constraint(equalTo: workspace.searchHost.bottomAnchor)
         ])
         configureActions()
+        configureShortcutKeys()
         observer = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.refresh() }
     }
     deinit {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         if let historyMonitor { NSEvent.removeMonitor(historyMonitor) }
         if let quickOpenMonitor { NSEvent.removeMonitor(quickOpenMonitor) }
+        if let shortcutsMonitor { NSEvent.removeMonitor(shortcutsMonitor) }
+        if let shortcutKeyMonitor { NSEvent.removeMonitor(shortcutKeyMonitor) }
+        if let shortcutFocusObserver { NotificationCenter.default.removeObserver(shortcutFocusObserver) }
+        shortcutChordReset?.cancel()
         language.stop()
     }
 
@@ -235,6 +249,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     }
 
     @objc func openFolder() {
+        dismissShortcuts()
         dismissCodeHover()
         dismissQuickOpen()
         let panel = NSOpenPanel()
@@ -250,6 +265,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     func open(_ folder: URL) {
         guard !session.isSwitching else { return }
+        dismissShortcuts()
         dismissQuickOpen()
         projectSearch.setActive(false); workspace.showSearch(false)
         workspace.navigation.search.isEnabled = false
@@ -267,6 +283,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     @objc func showFiles() { changeSidebar(false) }
     @objc func showChanges() { changeSidebar(true) }
     private func changeSidebar(_ changes: Bool) {
+        dismissShortcuts()
         let leavingSearch = !workspace.searchHost.isHidden
         projectSearch.setActive(false); workspace.showSearch(false)
         changesOnly = changes
@@ -387,6 +404,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     }
 
     @objc func closeTab() {
+        if shortcutsPicker != nil { dismissShortcuts(restoreFocus: true); return }
         guard !workspace.editor.closeActiveTab() else { return }
         if workspace.editorGroups.editors.count == 2 { workspace.editorGroups.close(workspace.editor) }
         else { view.window?.performClose(nil) }
@@ -407,6 +425,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     @objc func showProjectSearch() {
         guard session.state != nil, !session.isSwitching else { return }
+        dismissShortcuts()
         dismissCodeHover(); dismissQuickOpen(); dismissHistory(); picker?.close(); pickerRequest = UUID()
         workspace.showSearch(true); projectSearch.setActive(true)
         projectSearch.query.selectText(nil)
@@ -414,6 +433,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     @objc func showQuickOpen() {
         guard let state = session.state, !session.isSwitching else { return }
+        dismissShortcuts()
         dismissCodeHover(); dismissHistory(); picker?.close(); pickerRequest = UUID()
         if let quickOpen { view.window?.makeFirstResponder(quickOpen.filter); quickOpen.filter.selectText(nil); return }
         let controller = QuickOpenPicker(paths: state.files, recent: history.recentFiles(in: state.root))
@@ -457,6 +477,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     @objc func showHistory() {
         guard !session.isSwitching else { return }
+        dismissShortcuts()
         dismissQuickOpen()
         dismissCodeHover()
         if historyPicker != nil { dismissHistory(); return }
@@ -514,6 +535,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     private func showPicker(_ kind: GitDestinationPicker.Kind, anchor: NSButton) {
         guard session.state?.isGit == true, !session.isSwitching else { return }
+        dismissShortcuts()
         dismissCodeHover()
         dismissQuickOpen()
         dismissHistory()
@@ -553,6 +575,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     func activate(_ destination: GitDestination, completion: @escaping (Result<WorkspaceState, Error>) -> Void) {
         guard !session.isSwitching, session.reader != nil else { return }
+        dismissShortcuts()
         dismissQuickOpen(); projectSearch.setActive(false)
         inspectToken = UUID()
         session.invalidateDocument()
@@ -588,5 +611,91 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         workspace.editor.right.text.cancelInspection()
         inspection.dismissHover()
     }
-    func shutdown() { dismissQuickOpen(); projectSearch.cancel(); dismissHistory(); picker?.close(); session.close(); inspection.dismiss(); language.stop() }
+    func shutdown() {
+        dismissShortcuts(); cancelShortcutChord()
+        if let shortcutKeyMonitor { NSEvent.removeMonitor(shortcutKeyMonitor); self.shortcutKeyMonitor = nil }
+        if let shortcutFocusObserver { NotificationCenter.default.removeObserver(shortcutFocusObserver); self.shortcutFocusObserver = nil }
+        dismissQuickOpen(); projectSearch.cancel(); dismissHistory(); picker?.close(); session.close(); inspection.dismiss(); language.stop()
+    }
+
+    private func configureShortcutKeys() {
+        shortcutKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self else { return event }
+            return self.handleShortcutKey(event) ? nil : event
+        }
+        shortcutFocusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main) { [weak self] note in
+            guard let self, (note.object as? NSWindow) === self.view.window else { return }
+            self.cancelShortcutChord()
+        }
+    }
+
+    func handleShortcutKey(_ event: NSEvent) -> Bool {
+        guard let window = view.window, event.window === window, window.attachedSheet == nil else { cancelShortcutChord(); return false }
+        guard event.type == .keyDown else { cancelShortcutChord(); return false }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let deadline = shortcutChord.deadline, now > deadline { cancelShortcutChord() }
+        switch shortcutChord.handle(event, now: now) {
+        case .passThrough: cancelShortcutChord(); return false
+        case .cancelled: cancelShortcutChord(); return true
+        case .open: cancelShortcutChord(); showKeyboardShortcuts(); return true
+        case .waiting:
+            if shortcutChordReset == nil {
+                shortcutMessageBeforeChord = workspace.status.message.stringValue
+                workspace.status.message.stringValue = shortcutChordHint
+                let reset = DispatchWorkItem { [weak self] in self?.cancelShortcutChord() }
+                shortcutChordReset = reset
+                DispatchQueue.main.asyncAfter(deadline: .now() + KeyboardShortcutChord.timeout, execute: reset)
+            }
+            return true
+        }
+    }
+
+    private func cancelShortcutChord() {
+        shortcutChord.cancel()
+        shortcutChordReset?.cancel(); shortcutChordReset = nil
+        if let previous = shortcutMessageBeforeChord, workspace.status.message.stringValue == shortcutChordHint { workspace.status.message.stringValue = previous }
+        shortcutMessageBeforeChord = nil
+    }
+
+    @objc func showKeyboardShortcuts() {
+        cancelShortcutChord()
+        guard let window = view.window else { return }
+        if let shortcutsPicker { window.makeFirstResponder(shortcutsPicker.filter); shortcutsPicker.filter.selectText(nil); return }
+        dismissCodeHover(); dismissQuickOpen(); dismissHistory(); picker?.close(); pickerRequest = UUID()
+        let focused = window.firstResponder as? NSView
+        if let fieldEditor = focused as? NSTextView, fieldEditor.isFieldEditor { shortcutPreviousFocus = fieldEditor.delegate as? NSView }
+        else { shortcutPreviousFocus = focused }
+        let controller = KeyboardShortcutsController(entries: KeyboardShortcutCatalog.entries(in: NSApp.mainMenu))
+        addChild(controller); workspace.add(controller.view)
+        let width = controller.view.widthAnchor.constraint(equalToConstant: 760); width.priority = .defaultHigh
+        let height = controller.view.heightAnchor.constraint(equalToConstant: 560); height.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            controller.view.centerXAnchor.constraint(equalTo: workspace.centerXAnchor), controller.view.topAnchor.constraint(equalTo: workspace.header.bottomAnchor, constant: 8),
+            controller.view.leadingAnchor.constraint(greaterThanOrEqualTo: workspace.leadingAnchor, constant: 16), controller.view.trailingAnchor.constraint(lessThanOrEqualTo: workspace.trailingAnchor, constant: -16),
+            controller.view.heightAnchor.constraint(lessThanOrEqualTo: workspace.heightAnchor, constant: -104), width, height
+        ])
+        controller.onDismiss = { [weak self] in self?.dismissShortcuts(restoreFocus: true) }
+        shortcutsPicker = controller
+        workspace.layoutSubtreeIfNeeded(); window.makeFirstResponder(controller.filter)
+        shortcutsMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self, weak controller] event in
+            guard let self, let controller, event.window === self.view.window else { return event }
+            if event.type == .keyDown {
+                if event.keyCode == 53 { self.dismissShortcuts(restoreFocus: true); return nil }
+            } else if !controller.view.bounds.contains(controller.view.convert(event.locationInWindow, from: nil)) { self.dismissShortcuts() }
+            return event
+        }
+    }
+
+    private func dismissShortcuts(restoreFocus: Bool = false) {
+        if let shortcutsMonitor { NSEvent.removeMonitor(shortcutsMonitor); self.shortcutsMonitor = nil }
+        guard let shortcutsPicker else { return }
+        view.window?.makeFirstResponder(nil)
+        shortcutsPicker.view.removeFromSuperview(); shortcutsPicker.removeFromParent(); self.shortcutsPicker = nil
+        if restoreFocus {
+            if let previous = shortcutPreviousFocus, previous.isDescendant(of: workspace), !previous.isHiddenOrHasHiddenAncestor {
+                view.window?.makeFirstResponder(previous)
+            } else { workspace.editorGroups.activate(workspace.editor, focus: true) }
+        }
+        shortcutPreviousFocus = nil
+    }
 }
