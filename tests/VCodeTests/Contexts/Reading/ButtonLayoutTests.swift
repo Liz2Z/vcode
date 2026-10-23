@@ -62,6 +62,54 @@ final class ButtonLayoutTests: XCTestCase {
         }
     }
 
+    func testChangesReminderFollowsGitUpdatesAndSidebarWithoutMovingTitles() throws {
+        let workspace = WorkspaceView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 580), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = workspace
+        defer { window.close() }
+        let navigation = workspace.navigation
+        let root = URL(fileURLWithPath: "/tmp/reminder", isDirectory: true)
+        func show(_ changes: [GitChange]?, selected: Bool = false) {
+            workspace.showSearch(false)
+            workspace.show(WorkspaceState(root: root, files: ["main.ts"], git: changes.map { GitStatus(root: root, branch: "main", changes: $0, hasHead: true) }), changesOnly: selected)
+            workspace.layoutSubtreeIfNeeded()
+        }
+        show([])
+        XCTAssertTrue(navigation.changesIndicator.isHidden)
+        for comparison in [GitComparison.staged, .unstaged] {
+            show([GitChange(path: "main.ts", kind: .modified, comparison: comparison)])
+            XCTAssertFalse(navigation.changesIndicator.isHidden)
+            navigation.select(changes: true)
+            XCTAssertTrue(navigation.changesIndicator.isHidden)
+            workspace.showSearch(true)
+            XCTAssertFalse(navigation.changesIndicator.isHidden, "Search is outside Changes even if the previous tree was Changes")
+            workspace.show(WorkspaceState(root: root, files: [], git: GitStatus(root: root, branch: "clean", changes: [], hasHead: true)), changesOnly: true)
+            XCTAssertTrue(navigation.changesIndicator.isHidden, "A refresh in Search must clear a stale reminder")
+        }
+        show([GitChange(path: "new.ts", kind: .untracked)])
+        for width: Double in [220, 400, 220] {
+            workspace.restoreSidebarWidth(width)
+            workspace.layoutSubtreeIfNeeded()
+            let button = navigation.changes
+            let stack = try XCTUnwrap(button.subviews.compactMap { $0 as? NSStackView }.first)
+            let label = try XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? NSTextField }.first)
+            let before = stack.frame
+            let dot = navigation.changesIndicator.frame
+            XCTAssertTrue(button.bounds.contains(dot))
+            XCTAssertFalse(dot.intersects(label.convert(label.bounds, to: button)), "The dot must not obscure the Changes title at minimum width")
+            let point = navigation.convert(NSPoint(x: dot.midX, y: dot.midY), from: button)
+            XCTAssertTrue(button.hitTest(point) === button, "The dot must preserve the tab's click target")
+            navigation.select(changes: true)
+            workspace.layoutSubtreeIfNeeded()
+            XCTAssertEqual(stack.frame, before)
+            navigation.select(changes: false)
+            XCTAssertFalse(navigation.changesIndicator.isHidden)
+        }
+        show(nil)
+        XCTAssertTrue(navigation.changesIndicator.isHidden, "Plain folders have no Git reminder")
+    }
+
     func testIconOnlyCloseButtonStaysSquareAndCentered() throws {
         let button = Theme.button("xmark", tooltip: "Close", target: nil, action: nil)
         button.frame = NSRect(x: 0, y: 0, width: 24, height: 24)

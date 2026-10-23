@@ -92,7 +92,7 @@ final class WorkspaceView: NSView, NSSplitViewDelegate {
         navigation.search.isEnabled = true
         header.show(state)
         explorer.show(state, changesOnly: changesOnly)
-        navigation.changes.toolTip = "Changes (⌘2) · \(state.changes.count) files"
+        navigation.updateChanges(count: state.changes.count)
         status.message.stringValue = "\(state.files.count) files  ·  \(state.changes.count) changes  ·  Read Only"
     }
 

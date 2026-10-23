@@ -55,6 +55,8 @@ final class WorkspaceNavigation: NSView {
     let files = Theme.actionButton("Files")
     let changes = Theme.actionButton("Changes")
     let search = Theme.actionButton("Search")
+    let changesIndicator = NSView()
+    private var changeCount = 0
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -65,12 +67,25 @@ final class WorkspaceNavigation: NSView {
         // Keep full titles at 220 points; equal widths yield to title minima.
         for button in [files, changes, search] { button.horizontalPadding = 8 }
         add(files, changes, search)
+        changesIndicator.setAccessibilityElement(false)
+        changesIndicator.wantsLayer = true
+        if let layer = changesIndicator.layer {
+            layer.backgroundColor = Theme.accent.cgColor
+            layer.cornerRadius = 2.5
+            layer.shadowColor = Theme.accent.cgColor
+            layer.shadowOpacity = 0.9
+            layer.shadowRadius = 3.5
+            layer.shadowOffset = .zero
+        }
+        changes.add(changesIndicator)
         let equalWidths = [files.widthAnchor.constraint(equalTo: changes.widthAnchor), files.widthAnchor.constraint(equalTo: search.widthAnchor)]
         equalWidths.forEach { $0.priority = .defaultHigh }
         NSLayoutConstraint.activate([
             files.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.Layout.controlGap), files.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Layout.controlGap), files.bottomAnchor.constraint(equalTo: bottomAnchor),
             changes.leadingAnchor.constraint(equalTo: files.trailingAnchor, constant: 4), changes.topAnchor.constraint(equalTo: files.topAnchor), changes.bottomAnchor.constraint(equalTo: files.bottomAnchor),
-            search.leadingAnchor.constraint(equalTo: changes.trailingAnchor, constant: 4), search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.Layout.controlGap), search.topAnchor.constraint(equalTo: files.topAnchor), search.bottomAnchor.constraint(equalTo: files.bottomAnchor)
+            search.leadingAnchor.constraint(equalTo: changes.trailingAnchor, constant: 4), search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.Layout.controlGap), search.topAnchor.constraint(equalTo: files.topAnchor), search.bottomAnchor.constraint(equalTo: files.bottomAnchor),
+            changesIndicator.widthAnchor.constraint(equalToConstant: 5), changesIndicator.heightAnchor.constraint(equalToConstant: 5),
+            changesIndicator.topAnchor.constraint(equalTo: changes.topAnchor, constant: 3), changesIndicator.trailingAnchor.constraint(equalTo: changes.trailingAnchor, constant: -4)
         ] + equalWidths)
         select(changes: false)
     }
@@ -81,6 +96,18 @@ final class WorkspaceNavigation: NSView {
             button.isSelected = active
             button.setAccessibilityValue(active ? 1 : 0)
         }
+        updateIndicator()
+    }
+
+    func updateChanges(count: Int) {
+        changeCount = count
+        changes.toolTip = "Changes (⌘2) · \(count) files"
+        changes.setAccessibilityHelp(count > 0 ? "\(count) Git changes" : "No Git changes")
+        updateIndicator()
+    }
+
+    private func updateIndicator() {
+        changesIndicator.isHidden = changeCount == 0 || changes.isSelected
     }
 }
 

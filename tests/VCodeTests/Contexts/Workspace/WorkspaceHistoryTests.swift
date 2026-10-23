@@ -51,6 +51,36 @@ final class WorkspaceHistoryTests: XCTestCase {
         XCTAssertTrue(WorkspaceHistoryStore(directory: directory, legacyDefaults: nil).entries.isEmpty)
     }
 
+    func testManualCleanupPersistsWithoutDeletingWorkspacesOrCurrentSession() throws {
+        let base = directory(), root = base.appendingPathComponent("current", isDirectory: true), other = base.appendingPathComponent("other", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        let store = WorkspaceHistoryStore(directory: base.appendingPathComponent("state"), legacyDefaults: nil)
+        let current = state(root.path)
+        store.record(state(other.path)); store.record(current)
+        store.recordFile("source.ts", in: root)
+        store.saveWindow(WindowPlacement(x: 10, y: 20, width: 920, height: 580))
+        let session = WorkspaceReadingSession(groups: [], activeGroup: 0, splitRatio: 0.5, sidebarWidth: 240, changesOnly: false, trees: [:])
+        store.saveReadingSession(session, in: root)
+        store.removeRecent(other)
+        XCTAssertEqual(store.entries.map(\.root), [root])
+        XCTAssertEqual(WorkspaceHistoryStore(directory: store.file.deletingLastPathComponent(), legacyDefaults: nil).entries.map(\.root), [root])
+        store.clearRecents()
+        store.update(current)
+        store.saveReadingSession(session, in: root)
+        store.recordFile("next.ts", in: root)
+        let restored = WorkspaceHistoryStore(directory: store.file.deletingLastPathComponent(), legacyDefaults: nil)
+        XCTAssertTrue(restored.entries.isEmpty, "Background refresh and saving must not undo manual cleanup")
+        XCTAssertEqual(restored.lastFolder, root)
+        XCTAssertEqual(restored.readingSession(in: root), session)
+        XCTAssertEqual(restored.recentFiles(in: root), ["next.ts", "source.ts"])
+        XCTAssertEqual(restored.windowPlacement, store.windowPlacement)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: other.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.path))
+        restored.record(current)
+        XCTAssertEqual(restored.entries.map(\.root), [root], "An explicit visit records the workspace again")
+    }
+
     func testPickerGuardsCurrentMissingRowsAndKeepsTextVisible() throws {
         _ = NSApplication.shared
         let available = state("/tmp/available")
@@ -133,5 +163,31 @@ final class WorkspaceHistoryTests: XCTestCase {
         controller.open(base.appendingPathComponent("missing"))
         RunLoop.main.run(until: Date().addingTimeInterval(0.2))
         XCTAssertEqual(history.entries.count, 2)
+
+        controller.showHistory()
+        let cleanup = try XCTUnwrap(controller.children.compactMap { $0 as? WorkspaceHistoryPicker }.first)
+        window.contentView?.layoutSubtreeIfNeeded()
+        let currentCell = try XCTUnwrap(cleanup.table.view(atColumn: 0, row: 1, makeIfNecessary: true) as? HistoryCell)
+        currentCell.layoutSubtreeIfNeeded()
+        let buttonPoint = cleanup.table.convert(NSPoint(x: currentCell.removeButton.bounds.midX, y: currentCell.removeButton.bounds.midY), from: currentCell.removeButton)
+        XCTAssertTrue(cleanup.table.hitTest(buttonPoint) === currentCell.removeButton, "Current rows must still allow cleanup")
+        currentCell.removeButton.performClick(nil)
+        XCTAssertEqual(history.entries.map(\.root), [a.root])
+        XCTAssertEqual(cleanup.table.numberOfRows, 2)
+        XCTAssertTrue(controller.children.contains { $0 === cleanup }, "Removing a record does not close the picker")
+        XCTAssertEqual(window.title, "\(b.root.lastPathComponent) — VCode", "Removing the current entry does not switch worktrees")
+        cleanup.filter.stringValue = "no visible results"
+        _ = cleanup.filter.sendAction(cleanup.filter.action, to: cleanup.filter.target)
+        XCTAssertEqual(cleanup.table.numberOfRows, 0)
+        XCTAssertTrue(cleanup.clearButton.isEnabled, "Clear All also covers entries hidden by the filter")
+        cleanup.clearButton.performClick(nil)
+        XCTAssertTrue(history.entries.isEmpty)
+        XCTAssertFalse(cleanup.clearButton.isEnabled)
+        XCTAssertEqual(cleanup.filter.stringValue, "")
+        XCTAssertEqual(history.lastFolder, b.root)
+        controller.showHistory(); controller.showHistory()
+        let empty = try XCTUnwrap(controller.children.compactMap { $0 as? WorkspaceHistoryPicker }.first)
+        XCTAssertEqual(empty.table.numberOfRows, 0)
+        XCTAssertFalse(empty.clearButton.isEnabled)
     }
 }

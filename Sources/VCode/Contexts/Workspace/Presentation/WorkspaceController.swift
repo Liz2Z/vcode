@@ -609,10 +609,11 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         addChild(controller)
         let surface = controller.view
         workspace.add(surface)
+        let height = surface.heightAnchor.constraint(equalToConstant: controller.preferredHeight)
         NSLayoutConstraint.activate([
             surface.trailingAnchor.constraint(equalTo: workspace.trailingAnchor, constant: -16),
             surface.topAnchor.constraint(equalTo: workspace.header.bottomAnchor),
-            surface.widthAnchor.constraint(equalToConstant: 560), surface.heightAnchor.constraint(equalToConstant: controller.preferredHeight)
+            surface.widthAnchor.constraint(equalToConstant: 560), height
         ])
         controller.onChoose = { [weak self] root in
             guard let self else { return }
@@ -623,6 +624,20 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             self.open(root)
         }
         controller.onDismiss = { [weak self] in self?.dismissHistory() }
+        controller.onRemove = { [weak self, weak controller] root in
+            guard let self else { return }
+            self.history.removeRecent(root)
+            controller?.update(entries: self.history.entries)
+            height.constant = controller?.preferredHeight ?? 180
+            if let error = self.history.persistenceError { self.workspace.status.message.stringValue = error }
+        }
+        controller.onClear = { [weak self, weak controller] in
+            guard let self else { return }
+            self.history.clearRecents()
+            controller?.update(entries: self.history.entries)
+            height.constant = controller?.preferredHeight ?? 180
+            if let error = self.history.persistenceError { self.workspace.status.message.stringValue = error }
+        }
         historyPicker = controller
         workspace.header.historyButton.isSelected = true
         workspace.layoutSubtreeIfNeeded()

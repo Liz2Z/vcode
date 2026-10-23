@@ -74,6 +74,19 @@ final class WorkspaceHistoryStore {
         persist()
     }
 
+    func removeRecent(_ root: URL) {
+        let path = root.standardizedFileURL.path
+        guard stored.entries.contains(where: { $0.root.standardizedFileURL.path == path }) else { return }
+        stored.entries.removeAll { $0.root.standardizedFileURL.path == path }
+        persist()
+    }
+
+    func clearRecents() {
+        guard !stored.entries.isEmpty else { return }
+        stored.entries.removeAll()
+        persist()
+    }
+
     func saveWindow(_ placement: WindowPlacement) {
         guard stored.window != placement else { return }
         stored.window = placement

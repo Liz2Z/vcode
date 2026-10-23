@@ -3,11 +3,14 @@ import AppKit
 final class WorkspaceHistoryPicker: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     enum Row { case project(RecentProject), workspace(RecentWorkspace) }
     var onChoose: ((URL) -> Void)?
+    var onRemove: ((URL) -> Void)?
+    var onClear: (() -> Void)?
     let filter = Theme.searchField()
     let table = HistoryTableView()
+    let clearButton = Theme.actionButton("Clear All")
     private let scroll = NSScrollView()
     private let empty = Theme.label("No recent projects yet", size: 12, color: Theme.muted)
-    private let entries: [RecentWorkspace]
+    private var entries: [RecentWorkspace]
     private let current: URL?
     private let available: (URL) -> Bool
     private(set) var rows: [Row] = []
@@ -24,6 +27,9 @@ final class WorkspaceHistoryPicker: NSViewController, NSTableViewDataSource, NST
     override func loadView() {
         view = FloatingSurface(frame: NSRect(x: 0, y: 0, width: 560, height: preferredHeight))
         let title = Theme.label("Recent projects & worktrees", size: 15, weight: .semibold)
+        clearButton.target = self; clearButton.action = #selector(clearAll)
+        clearButton.toolTip = "Clear all recent projects and worktrees; keep folders and the current workspace"
+        clearButton.setAccessibilityLabel("Clear all recent projects and worktrees")
         filter.placeholderString = "Filter projects, worktrees or paths"
         filter.font = .systemFont(ofSize: 12)
         filter.focusRingType = .none
@@ -47,9 +53,11 @@ final class WorkspaceHistoryPicker: NSViewController, NSTableViewDataSource, NST
         Theme.compactScrollers(scroll)
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
-        view.add(title, filter, scroll, empty)
+        view.add(title, clearButton, filter, scroll, empty)
         NSLayoutConstraint.activate([
             title.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16), title.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: clearButton.leadingAnchor, constant: -12),
+            clearButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16), clearButton.centerYAnchor.constraint(equalTo: title.centerYAnchor), clearButton.heightAnchor.constraint(equalToConstant: 28),
             filter.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 12), filter.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16), filter.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16), filter.heightAnchor.constraint(equalToConstant: 28),
             scroll.topAnchor.constraint(equalTo: filter.bottomAnchor, constant: 8), scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8), scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8), scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -8),
             empty.centerXAnchor.constraint(equalTo: scroll.centerXAnchor), empty.centerYAnchor.constraint(equalTo: scroll.centerYAnchor)
@@ -79,7 +87,16 @@ final class WorkspaceHistoryPicker: NSViewController, NSTableViewDataSource, NST
         table.deselectAll(nil)
         empty.isHidden = !rows.isEmpty
         empty.stringValue = filter.stringValue.isEmpty ? "No recent projects yet" : "No matching projects or worktrees"
+        clearButton.isEnabled = !entries.isEmpty
     }
+
+    func update(entries: [RecentWorkspace]) {
+        self.entries = entries
+        if entries.isEmpty { filter.stringValue = "" }
+        applyFilter()
+    }
+
+    @objc private func clearAll() { onClear?() }
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { if case .project = rows[row] { return 36 }; return 56 }
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool { if case .project = rows[row] { return true }; return false }
@@ -102,6 +119,9 @@ final class WorkspaceHistoryPicker: NSViewController, NSTableViewDataSource, NST
             cell.title.textColor = entry.root == current ? Theme.accent : exists ? Theme.text : Theme.muted
             cell.path.stringValue = entry.root.path
             cell.toolTip = entry.root.path
+            cell.removeButton.toolTip = "Remove from Recent: " + entry.root.path
+            cell.removeButton.setAccessibilityLabel("Remove from Recent: " + entry.root.path)
+            cell.onRemove = { [weak self] in self?.onRemove?(entry.root) }
             return cell
         }
     }
@@ -137,20 +157,26 @@ final class HistoryTableView: NSTableView {
     }
 }
 
-private final class HistoryCell: NSTableCellView {
+final class HistoryCell: NSTableCellView {
     let title = Theme.label("", size: 13, weight: .medium)
     let path = Theme.label("", size: 11, color: Theme.muted)
+    let removeButton = Theme.button("xmark", tooltip: "Remove from Recent", target: nil, action: nil)
+    var onRemove: (() -> Void)?
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         title.lineBreakMode = .byTruncatingMiddle
         path.lineBreakMode = .byTruncatingMiddle
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        add(title, path)
+        removeButton.target = self; removeButton.action = #selector(removeRecent)
+        add(title, path, removeButton)
         NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12), title.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12), title.topAnchor.constraint(equalTo: topAnchor, constant: 9),
-            path.leadingAnchor.constraint(equalTo: title.leadingAnchor), path.trailingAnchor.constraint(equalTo: title.trailingAnchor), path.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 5)
+            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12), title.trailingAnchor.constraint(equalTo: removeButton.leadingAnchor, constant: -8), title.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+            path.leadingAnchor.constraint(equalTo: title.leadingAnchor), path.trailingAnchor.constraint(equalTo: title.trailingAnchor), path.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 5),
+            removeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8), removeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            removeButton.widthAnchor.constraint(equalToConstant: 28), removeButton.heightAnchor.constraint(equalToConstant: 28)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+    @objc private func removeRecent() { onRemove?() }
 }
