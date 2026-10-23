@@ -2,14 +2,33 @@ import AppKit
 
 enum MarkdownRenderer {
     static let codeBlock = NSAttributedString.Key("VCodeMarkdownCodeBlock")
+    static let sourceRange = NSAttributedString.Key("VCodeMarkdownSourceRange")
 
     static func supports(_ path: String) -> Bool {
         ["md", "markdown", "mdown"].contains((path as NSString).pathExtension.lowercased())
     }
 
     static func render(_ source: String) throws -> NSAttributedString {
-        let parsed = try AttributedString(markdown: source)
+        let parsed = try AttributedString(markdown: source, options: .init(appliesSourcePositionAttributes: true))
         let result = NSMutableAttributedString()
+        let sourceLines = source.components(separatedBy: "\n")
+        var sourceOffset = 0
+        let lineOffsets = sourceLines.map { line in defer { sourceOffset += (line as NSString).length + 1 }; return sourceOffset }
+        // Use the parser's UTF-8 line/column coordinates. On some Foundation
+        // versions NSRange(position, in:) retains only the first character.
+        func sourceRange(_ position: AttributedString.MarkdownSourcePosition) -> NSRange? {
+            guard sourceLines.indices.contains(position.startLine - 1), sourceLines.indices.contains(position.endLine - 1) else { return nil }
+            func offset(line: Int, byte: Int) -> Int {
+                let value = sourceLines[line - 1]
+                let bytes = value.utf8
+                let boundary = bytes.index(bytes.startIndex, offsetBy: min(max(0, byte), bytes.count))
+                let prefix = String(decoding: bytes[..<boundary], as: UTF8.self)
+                return lineOffsets[line - 1] + (prefix as NSString).length
+            }
+            let start = offset(line: position.startLine, byte: position.startColumn - 1)
+            let end = offset(line: position.endLine, byte: position.endColumn)
+            return NSRange(location: start, length: max(0, end - start))
+        }
         var previousBlock: Int?
         for run in parsed.runs {
             let components = run.presentationIntent?.components ?? []
@@ -20,15 +39,22 @@ enum MarkdownRenderer {
             }
             previousBlock = block
             let content = String(parsed[run.range].characters)
+            let sourceSpan = run.markdownSourcePosition.flatMap { sourceRange($0) }
             if let code = components.first(where: { if case .codeBlock = $0.kind { return true }; return false }),
                case .codeBlock(let language) = code.kind {
                 let text = NSTextStorage(string: content.hasSuffix("\n") ? String(content.dropLast()) : content)
                 Syntax.apply(to: text, path: "preview." + codeExtension(language), font: Theme.Code.font())
                 text.addAttribute(codeBlock, value: true, range: NSRange(location: 0, length: text.length))
+                if let sourceSpan {
+                    // A fenced block's native source span includes its fences.
+                    let literal = (source as NSString).range(of: text.string, range: sourceSpan)
+                    text.addAttribute(Self.sourceRange, value: NSValue(range: literal.location == NSNotFound ? sourceSpan : literal), range: NSRange(location: 0, length: text.length))
+                }
                 result.append(text)
                 continue
             }
             var attributes = bodyAttributes
+            if let sourceSpan { attributes[Self.sourceRange] = NSValue(range: sourceSpan) }
             let paragraph = (attributes[.paragraphStyle] as! NSParagraphStyle).mutableCopy() as! NSMutableParagraphStyle
             let items = components.filter { if case .listItem = $0.kind { return true }; return false }
             if let item = items.first, case .listItem(let ordinal) = item.kind {

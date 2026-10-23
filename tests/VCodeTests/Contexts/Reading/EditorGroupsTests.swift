@@ -109,7 +109,7 @@ final class EditorGroupsTests: XCTestCase {
         let workspace = try XCTUnwrap(controller.view as? WorkspaceView)
         let groups = workspace.editorGroups
         controller.open(root)
-        waitUntil { workspace.header.project.stringValue == root.lastPathComponent }
+        waitUntil { workspace.header.worktreeButton.title == root.lastPathComponent }
         let left = groups.activeEditor
         controller.openFile("alpha.ts", diff: false)
         controller.splitEditorRight()
@@ -144,7 +144,7 @@ final class EditorGroupsTests: XCTestCase {
         controller.splitEditorRight()
         controller.openFile("beta.ts", diff: false)
         controller.open(nextRoot)
-        waitUntil { workspace.header.project.stringValue == nextRoot.lastPathComponent }
+        waitUntil { workspace.header.worktreeButton.title == nextRoot.lastPathComponent }
         XCTAssertEqual(groups.editors.count, 1)
         XCTAssertNil(workspace.editor.activePath)
         XCTAssertTrue(workspace.editor.right.text.string.isEmpty)
@@ -176,7 +176,7 @@ final class EditorGroupsTests: XCTestCase {
         let workspace = try XCTUnwrap(controller.view as? WorkspaceView)
         let groups = workspace.editorGroups
         controller.open(root)
-        waitUntil { workspace.header.branchButton.title == "Branch · main" }
+        waitUntil { workspace.header.branchButton.title == "main" }
         let left = groups.activeEditor
         controller.openFile("shared.ts", diff: true, comparison: .staged)
         controller.splitEditorRight()

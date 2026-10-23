@@ -54,7 +54,7 @@ final class WorkspaceSwitchTests: XCTestCase {
         defer { controller.shutdown(); withExtendedLifetime(window) {} }
         let workspace = try XCTUnwrap(controller.view as? WorkspaceView)
         controller.open(primary)
-        wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in workspace.header.branchButton.title == "Branch · main" }, object: nil)], timeout: 10)
+        wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in workspace.header.branchButton.title == "main" }, object: nil)], timeout: 10)
         controller.openFile("src/main.ts", diff: false)
         wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in workspace.editor.right.text.string.contains("'main'") }, object: nil)], timeout: 10)
         let firstSwitch = expectation(description: "controller switches branch")
@@ -63,10 +63,10 @@ final class WorkspaceSwitchTests: XCTestCase {
             firstSwitch.fulfill()
         }
         wait(for: [firstSwitch], timeout: 10)
-        XCTAssertNil(workspace.editor.activePath)
-        XCTAssertTrue(workspace.editor.right.text.string.isEmpty)
+        XCTAssertEqual(workspace.editor.activePath, "src/main.ts")
+        wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in workspace.editor.right.text.string.contains("'feature'") }, object: nil)], timeout: 10)
         XCTAssertTrue(workspace.editor.left.text.string.isEmpty)
-        XCTAssertTrue(workspace.editor.welcome.isHidden == false)
+        XCTAssertTrue(workspace.editor.welcome.isHidden)
         XCTAssertEqual(workspace.explorer.outline.numberOfRows, 1)
         controller.openFile("src/main.ts", diff: true)
         wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in workspace.editor.right.text.string.contains("'feature'") }, object: nil)], timeout: 10)
@@ -85,11 +85,81 @@ final class WorkspaceSwitchTests: XCTestCase {
             nextWorktree.fulfill()
         }
         wait(for: [nextWorktree], timeout: 10)
-        XCTAssertEqual(workspace.header.branchButton.title, "Branch · linked")
+        XCTAssertEqual(workspace.header.branchButton.title, "linked")
         XCTAssertNil(workspace.editor.activePath)
         XCTAssertEqual(workspace.explorer.outline.numberOfRows, 1)
         controller.openFile("src/main.ts", diff: true)
         wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in workspace.editor.right.text.string.contains("'main'") }, object: nil)], timeout: 10)
+    }
+
+    func testRepeatedBranchSwitchAndResizePreserveSplitSourceAndDiff() throws {
+        _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vcode-branch-layout-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("main.ts")
+        func git(_ args: [String]) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["-C", root.path, "-c", "core.hooksPath=/dev/null"] + args
+            process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+            try process.run(); process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, "\(args)")
+        }
+        func waitUntil(_ condition: @escaping () -> Bool) {
+            wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)], timeout: 10)
+        }
+        let body = (0..<160).map { "// line \($0) " + String(repeating: "long content ", count: 16) }.joined(separator: "\n")
+        try git(["init", "-q", "-b", "main"])
+        try git(["config", "user.name", "VCode"]); try git(["config", "user.email", "test@localhost"])
+        try git(["config", "commit.gpgsign", "false"])
+        try ("export const branch = 'main';\n" + body).write(to: file, atomically: true, encoding: .utf8)
+        try git(["add", "."]); try git(["commit", "-qm", "main"])
+        try git(["switch", "-qc", "feature"])
+        try ("export const branch = 'feature';\n" + body).write(to: file, atomically: true, encoding: .utf8)
+        try git(["commit", "-qam", "feature"]); try git(["switch", "-q", "main"])
+        let controller = WorkspaceController(history: isolatedHistoryStore())
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1360, height: 700), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); controller.shutdown(); withExtendedLifetime(window) {} }
+        let workspace = try XCTUnwrap(controller.view as? WorkspaceView)
+        controller.open(root)
+        waitUntil { workspace.header.branchButton.title == "main" }
+        controller.openFile("main.ts", diff: false)
+        waitUntil { workspace.editor.currentSource?.contains("'main'") == true }
+        let source = workspace.editor
+        controller.splitEditorRight()
+        controller.openFile("main.ts", diff: true)
+        let diff = workspace.editor
+        waitUntil { diff.showingDiff && diff.right.text.string.contains("'main'") }
+        source.right.sync(to: NSPoint(x: 100, y: 500))
+        diff.left.sync(to: NSPoint(x: 100, y: 600))
+        diff.right.sync(to: NSPoint(x: 100, y: 600))
+        for (index, branch) in ["feature", "main", "feature", "main"].enumerated() {
+            window.setContentSize(NSSize(width: index.isMultiple(of: 2) ? 920 : 1360, height: index.isMultiple(of: 2) ? 580 : 700))
+            workspace.layoutSubtreeIfNeeded()
+            let switched = expectation(description: "switch \(index)")
+            controller.activate(.branch(branch)) { result in
+                XCTAssertEqual(try? result.get().branch, branch)
+                switched.fulfill()
+            }
+            wait(for: [switched], timeout: 10)
+            waitUntil { source.currentSource?.contains("'\(branch)'") == true && diff.right.text.string.contains("'\(branch)'") }
+            workspace.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            XCTAssertEqual(workspace.editorGroups.editors.count, 2)
+            XCTAssertFalse(source.showingDiff)
+            XCTAssertTrue(diff.showingDiff)
+            XCTAssertEqual(source.right.scroll.contentView.bounds.minY, 500, accuracy: 1)
+            XCTAssertEqual(diff.right.scroll.contentView.bounds.minY, 600, accuracy: 1)
+            for pane in [source.right, diff.left, diff.right] {
+                XCTAssertGreaterThan(pane.bounds.width, 0)
+                XCTAssertGreaterThan(pane.scroll.contentView.bounds.height, 0)
+                XCTAssertEqual(pane.scroll.scrollerStyle, .overlay)
+            }
+        }
     }
 
     func testChangeTreeOpensScopedDiffsAndTabsKeepTheirOwnVersions() throws {
@@ -118,7 +188,7 @@ final class WorkspaceSwitchTests: XCTestCase {
         defer { controller.shutdown(); withExtendedLifetime(window) {} }
         let workspace = try XCTUnwrap(controller.view as? WorkspaceView)
         controller.open(root)
-        wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in workspace.header.branchButton.title == "Branch · main" }, object: nil)], timeout: 10)
+        wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in workspace.header.branchButton.title == "main" }, object: nil)], timeout: 10)
         controller.showChanges()
         XCTAssertEqual(workspace.explorer.outline.numberOfRows, 6)
         func choose(_ comparison: GitComparison) {

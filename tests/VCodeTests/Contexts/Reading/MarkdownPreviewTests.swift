@@ -41,6 +41,55 @@ final class MarkdownPreviewTests: XCTestCase {
         XCTAssertEqual(content.attribute(MarkdownRenderer.codeBlock, at: keyword.location, effectiveRange: nil) as? Bool, true)
     }
 
+    func testSourceRangesFollowUnicodeInlineTokensAndFencedCode() throws {
+        let source = "# 标题 😀\r\n\r\nRead **强调** and `value`.\r\n\r\n```ts\r\nconst value = 1;\r\n```\r\n"
+        let content = try MarkdownRenderer.render(source)
+        for token in ["标题 😀", "强调", "value"] {
+            let rendered = (content.string as NSString).range(of: token)
+            let span = try XCTUnwrap(content.attribute(MarkdownRenderer.sourceRange, at: rendered.location, effectiveRange: nil) as? NSValue)
+            XCTAssertEqual((source as NSString).substring(with: span.rangeValue), token)
+        }
+        let code = (content.string as NSString).range(of: "const value = 1;")
+        let span = try XCTUnwrap(content.attribute(MarkdownRenderer.sourceRange, at: code.location, effectiveRange: nil) as? NSValue)
+        XCTAssertTrue((source as NSString).substring(with: span.rangeValue).contains("const value = 1;"))
+    }
+
+    func testViewportAnchorSurvivesReflowAndContentInsertedAboveIt() throws {
+        let preview = MarkdownPreview()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = preview
+        defer { window.orderOut(nil); withExtendedLifetime(window) {} }
+        func settle() {
+            let limit = Date().addingTimeInterval(3)
+            while preview.isRendering && Date() < limit { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+            XCTAssertFalse(preview.isRendering)
+            preview.layoutSubtreeIfNeeded()
+        }
+        let source = (0..<40).map { "## Section \($0)\n\n" + "Paragraph \($0) " + String(repeating: "words to wrap around the viewport ", count: 8) }.joined(separator: "\n\n")
+        window.setContentSize(NSSize(width: 520, height: 300))
+        preview.show(source); settle()
+        XCTAssertGreaterThan(preview.scroll.frame.width, 450)
+        XCTAssertGreaterThan(preview.scroll.frame.height, 250)
+        preview.scroll.contentView.scroll(to: NSPoint(x: 0, y: 920))
+        let original = try XCTUnwrap(preview.readingPosition())
+        let anchor = try XCTUnwrap(original.top)
+        preview.clear()
+        window.setContentSize(NSSize(width: 300, height: 300))
+        let updated = "# Inserted heading\n\nInserted paragraph.\n\n" + source
+        preview.show(updated, restoring: original)
+        XCTAssertEqual(preview.readingPosition()?.top, anchor, "Rendering must expose the pending content position, not temporary empty layout")
+        preview.show(updated + "\n\nRefreshed footer.", restoring: preview.readingPosition())
+        settle()
+        let restored = try XCTUnwrap(preview.readingPosition())
+        XCTAssertEqual(restored.top?.text, anchor.text)
+        XCTAssertEqual(restored.top?.line, anchor.line + 4)
+        XCTAssertGreaterThan(restored.y, original.y, "Narrower paragraphs and inserted content change pixels while retaining the same content")
+        XCTAssertEqual(restored.verticalOffset, original.verticalOffset, accuracy: 1)
+        preview.show("# Stale"); preview.clear()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertNil(preview.readingPosition())
+    }
+
     func testMarkdownModesRefreshAndClosingCannotLeakOldPreview() throws {
         let editor = EditorView(frame: NSRect(x: 0, y: 0, width: 700, height: 400))
         func snapshot(_ source: String, comparison: GitComparison? = nil) -> FileSnapshot {

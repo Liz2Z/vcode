@@ -6,9 +6,17 @@ final class EditorTabs: NSView, NSDraggingSource {
     var onCloseGroup: ((ReadingDocument, ReadingCloseScope) -> Void)?
     var onMove: ((ReadingDocument, Int) -> Void)?
     private var documents: [ReadingDocument] = []
-    private let scroll = NSScrollView()
+    private let scroll = TabScrollView()
     private let stack = NSStackView()
     private let dropIndicator = TabDropIndicator()
+    private var boundsObserver: NSObjectProtocol?
+    private var pendingReveal = false
+    private var viewportWidth: CGFloat = 0
+    private var overflowing = false
+    override var intrinsicContentSize: NSSize {
+        let track = NSScroller.scrollerWidth(for: .small, scrollerStyle: .legacy)
+        return NSSize(width: NSView.noIntrinsicMetric, height: 40 + (overflowing ? track : 0))
+    }
     private static let dragType = NSPasteboard.PasteboardType("dev.vcode.editor-tab")
     private let dragToken = UUID().uuidString
     private var draggingDocument: ReadingDocument?
@@ -26,23 +34,61 @@ final class EditorTabs: NSView, NSDraggingSource {
         stack.heightAnchor.constraint(equalToConstant: 32).isActive = true
         scroll.documentView = stack
         scroll.drawsBackground = false
-        scroll.horizontalScrollElasticity = .allowed
+        scroll.hasHorizontalScroller = true
+        scroll.hasVerticalScroller = false
+        // Keep the native thumb available for dragging while the strip is idle.
+        scroll.scrollerStyle = .legacy
+        scroll.autohidesScrollers = true
+        scroll.horizontalScrollElasticity = .none
+        Theme.compactScrollers(scroll)
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.required, for: .vertical)
+        scroll.contentView.postsBoundsChangedNotifications = true
+        boundsObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak self] _ in self?.refreshHover() }
         add(scroll)
         dropIndicator.isHidden = true
         Theme.rounded(dropIndicator, radius: 1, color: Theme.accent)
         addSubview(dropIndicator)
         registerForDraggedTypes([Self.dragType])
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.Layout.controlGap), scroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.Layout.controlGap), scroll.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Layout.controlGap), scroll.bottomAnchor.constraint(equalTo: bottomAnchor)
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8), scroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            scroll.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Layout.controlGap), scroll.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+    deinit { if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) } }
+
+    override func layout() {
+        let overflowing = stack.fittingSize.width > max(0, bounds.width - 16) + 0.5
+        if self.overflowing != overflowing {
+            self.overflowing = overflowing
+            invalidateIntrinsicContentSize()
+        }
+        super.layout()
+        let width = scroll.contentSize.width
+        stack.setFrameSize(NSSize(width: max(stack.fittingSize.width, width), height: 32))
+        if pendingReveal || abs(width - viewportWidth) > 0.5 {
+            if let active = stack.arrangedSubviews.first(where: { view in
+                view.subviews.contains { $0.identifier?.rawValue == activeID }
+            }) { stack.scrollToVisible(active.frame) }
+        }
+        pendingReveal = false
+        viewportWidth = width
+        scroll.scrollHorizontally(to: scroll.contentView.bounds.minX)
+        refreshHover()
+    }
+
+    private func refreshHover() {
+        for case let content as TabContent in stack.arrangedSubviews {
+            content.refreshHover()
+            for case let button as FeedbackButton in content.subviews { button.refreshHover() }
+        }
+    }
 
     func show(_ session: ReaderSession, revealActive: Bool = true) {
         let previousOffset = scroll.contentView.bounds.origin
         clearDropIndicator()
         for child in stack.arrangedSubviews { stack.removeArrangedSubview(child); child.removeFromSuperview() }
-        var activeTab: NSView?
         documents = session.documents
         activeID = session.activeDocument?.id
         for document in documents {
@@ -90,15 +136,12 @@ final class EditorTabs: NSView, NSDraggingSource {
                 close.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -4), close.centerYAnchor.constraint(equalTo: content.centerYAnchor), close.widthAnchor.constraint(equalToConstant: 24), close.heightAnchor.constraint(equalToConstant: 24)
             ])
             stack.addArrangedSubview(content)
-            if active { activeTab = content }
         }
         stack.layoutSubtreeIfNeeded()
-        stack.frame.size.width = max(stack.fittingSize.width, scroll.bounds.width)
-        if revealActive, let activeTab { stack.scrollToVisible(activeTab.frame.insetBy(dx: -8, dy: 0)) }
-        else {
-            scroll.contentView.scroll(to: NSPoint(x: min(previousOffset.x, max(0, stack.bounds.width - scroll.contentSize.width)), y: previousOffset.y))
-            scroll.reflectScrolledClipView(scroll.contentView)
-        }
+        pendingReveal = revealActive
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        if !revealActive { scroll.scrollHorizontally(to: previousOffset.x) }
     }
 
     func setGroupFocused(_ focused: Bool) {
@@ -186,8 +229,7 @@ final class EditorTabs: NSView, NSDraggingSource {
         let point = clip.convert(sender.draggingLocation, from: nil)
         let delta: CGFloat = point.x < clip.bounds.minX + 24 ? -16 : point.x > clip.bounds.maxX - 24 ? 16 : 0
         if delta != 0 {
-            clip.scroll(to: NSPoint(x: max(0, min(stack.bounds.width - clip.bounds.width, clip.bounds.minX + delta)), y: clip.bounds.minY))
-            scroll.reflectScrolledClipView(clip)
+            scroll.scrollHorizontally(to: clip.bounds.minX + delta)
         }
         let location = stack.convert(sender.draggingLocation, from: nil)
         let index = stack.arrangedSubviews.firstIndex { location.x < $0.frame.midX } ?? documents.count
@@ -214,6 +256,24 @@ final class EditorTabs: NSView, NSDraggingSource {
     private func clearDropIndicator() {
         insertionIndex = nil
         dropIndicator.isHidden = true
+    }
+}
+
+private final class TabScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        // AppKit already applies natural-scroll direction and momentum to these
+        // deltas. Use the dominant axis so diagonal gestures aren't counted twice.
+        let x = event.scrollingDeltaX, y = event.scrollingDeltaY
+        let delta = abs(x) >= abs(y) ? x : y
+        let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : horizontalLineScroll
+        scrollHorizontally(to: contentView.bounds.minX - delta * scale)
+    }
+
+    func scrollHorizontally(to x: CGFloat) {
+        let clip = contentView
+        let proposed = NSRect(x: x, y: 0, width: clip.bounds.width, height: clip.bounds.height)
+        clip.scroll(to: clip.constrainBoundsRect(proposed).origin)
+        reflectScrolledClipView(clip)
     }
 }
 
@@ -246,14 +306,16 @@ private final class TabContent: NSView {
         let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
         addTrackingArea(area)
         tracking = area
+        refreshHover()
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        hovered = true
+    func refreshHover() {
+        hovered = containsVisibleWindowMouse
         updateFeedback()
     }
 
-    override func mouseExited(with event: NSEvent) { hovered = false; updateFeedback() }
+    override func mouseEntered(with event: NSEvent) { refreshHover() }
+    override func mouseExited(with event: NSEvent) { refreshHover() }
     func setPressed(_ value: Bool) { pressed = value; updateFeedback() }
     private func updateFeedback() {
         let selected = groupFocused ? Theme.surface : Theme.surface.withAlphaComponent(0.5)

@@ -65,17 +65,24 @@ final class PresentationTests: XCTestCase {
             window.setContentSize(size)
             workspace.layoutSubtreeIfNeeded()
             workspace.editor.layoutSubtreeIfNeeded()
-            for button in [workspace.header.branchButton, workspace.header.worktreeButton, workspace.header.historyButton, workspace.header.openButton, workspace.header.refreshButton] {
+            for button in [workspace.header.branchButton, workspace.header.worktreeButton, workspace.header.historyButton, workspace.header.openButton] {
                 let frame = button.convert(button.bounds, to: workspace.header)
                 XCTAssertTrue(workspace.header.bounds.insetBy(dx: -1, dy: -1).contains(frame))
                 XCTAssertGreaterThan(frame.width, 40)
             }
+            XCTAssertTrue(workspace.header.subviews.compactMap { $0 as? NSTextField }.isEmpty, "The worktree selector is the only workspace title")
+            XCTAssertLessThan(workspace.header.worktreeButton.frame.maxX, workspace.header.branchButton.frame.minX)
+            XCTAssertGreaterThan(workspace.header.worktreeButton.font!.pointSize, workspace.header.branchButton.font!.pointSize)
             let breadcrumbs = workspace.editor.breadcrumbs
             XCTAssertEqual(breadcrumbs.bounds.height, 28)
             XCTAssertFalse(breadcrumbs.subviews.contains { $0 is NSButton }, "The reading action strip must not return")
             XCTAssertGreaterThanOrEqual(workspace.editor.bounds.width, 560)
             XCTAssertLessThanOrEqual(workspace.explorer.bounds.width, 360)
         }
+        workspace.header.show(WorkspaceState(root: URL(fileURLWithPath: "/tmp/plain-folder"), files: [], git: nil))
+        XCTAssertEqual(workspace.header.worktreeButton.title, "plain-folder")
+        XCTAssertFalse(workspace.header.worktreeButton.isEnabled)
+        XCTAssertEqual(workspace.header.worktreeButton.contentTintColor, Theme.text, "The workspace title remains readable when switching is unavailable")
     }
 
     func testSyntaxDoesNotTreatURLsInsideStringsAsComments() {

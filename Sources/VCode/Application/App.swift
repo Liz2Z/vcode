@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var workspace: WorkspaceController!
     private let history = WorkspaceHistoryStore()
     private var windowSave: DispatchWorkItem?
+    private lazy var resourceUsage = ResourceUsageWindowController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -69,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     func application(_ sender: NSApplication, openFile filename: String) -> Bool { workspace?.open(URL(fileURLWithPath: filename)); return true }
 
+    @objc private func showResourceUsage() { resourceUsage.showWindow(nil) }
+
     private func buildMenu() {
         let main = NSMenu()
         func submenu(_ title: String) -> NSMenu {
@@ -86,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let app = submenu("VCode")
         item(app, "About VCode", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "")
+        item(app, "Resource Usage…", #selector(showResourceUsage), "", target: self)
         app.addItem(.separator())
         item(app, "Hide VCode", #selector(NSApplication.hide(_:)), "h")
         app.addItem(.separator())
@@ -99,6 +103,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item(edit, "Copy", #selector(NSText.copy(_:)), "c")
         item(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
         let view = submenu("View")
+        item(view, "Go Back", #selector(WorkspaceController.goBack), "-", flags: .control, target: workspace)
+        item(view, "Go Forward", #selector(WorkspaceController.goForward), "-", flags: [.control, .shift], target: workspace)
+        view.addItem(.separator())
         item(view, "Split Editor Right", #selector(WorkspaceController.splitEditorRight), "\\", target: workspace)
         view.addItem(.separator())
         item(view, "Files", #selector(WorkspaceController.showFiles), "1", target: workspace)

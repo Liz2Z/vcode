@@ -76,6 +76,11 @@ enum Theme {
         return button
     }
 
+    static func compactScrollers(_ scroll: NSScrollView) {
+        scroll.verticalScroller?.controlSize = .small
+        scroll.horizontalScroller?.controlSize = .small
+    }
+
     static func rounded(_ view: NSView, radius: CGFloat = Layout.panelRadius, color: NSColor = background) {
         fill(view, color)
         view.layer?.cornerRadius = radius

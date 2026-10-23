@@ -1,6 +1,6 @@
 import Foundation
 
-struct ReadingDocument: Equatable {
+struct ReadingDocument: Hashable {
     let path: String
     let comparison: GitComparison?
     var id: String { (comparison?.rawValue ?? "source") + "\0" + path }
@@ -72,4 +72,12 @@ struct ReaderSession {
     }
 
     mutating func reset() { documents = []; activeDocument = nil }
+
+    mutating func renamePaths(_ renames: [String: String]) {
+        func renamed(_ document: ReadingDocument) -> ReadingDocument {
+            ReadingDocument(path: renames[document.path] ?? document.path, comparison: document.comparison)
+        }
+        documents = documents.map(renamed).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+        activeDocument = activeDocument.map(renamed)
+    }
 }

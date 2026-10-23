@@ -19,13 +19,17 @@ final class WorkspaceReader {
     func load() throws -> WorkspaceState {
         let status = try git.status()
         let ignored = status == nil ? Set<String>() : try git.ignoredPaths()
-        return WorkspaceState(root: root, files: try files.list(excluding: ignored), git: status, project: project)
+        let listing = try files.listing(excluding: ignored)
+        return WorkspaceState(root: root, files: listing.paths, git: status, project: project, fileIdentities: listing.identities)
     }
 
     func snapshot(path: String, state: WorkspaceState, compare: Bool, comparison: GitComparison = .workingTree) throws -> FileSnapshot {
         let change = state.changes.first { $0.path == path && $0.comparison == comparison }
         let oldPath = change?.originalPath ?? path
         let scope = compare && state.isGit ? comparison : nil
+        if scope == nil && !files.exists(path) {
+            return FileSnapshot(path: path, before: "", after: "", rows: [], message: "File deleted or moved · Waiting for this path to become available again.", isBinary: false)
+        }
         if scope == .unstaged && change?.kind == .conflict {
             return FileSnapshot(path: path, before: "", after: "", rows: [], message: "Unmerged file · The index contains multiple conflict versions. Resolve the conflict to compare changes.", isBinary: false, comparison: scope)
         }

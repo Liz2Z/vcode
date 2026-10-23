@@ -7,6 +7,8 @@ final class EditorView: NSView, NSSplitViewDelegate {
     let breadcrumbs = EditorBreadcrumbs()
     let welcome = WelcomeView()
     let markdown = MarkdownPreview()
+    let backButton = Theme.button("arrow.left", tooltip: "Go Back (⌃−)", target: nil, action: nil)
+    let forwardButton = Theme.button("arrow.right", tooltip: "Go Forward (⌃⇧−)", target: nil, action: nil)
     let splitEditorButton = Theme.button("rectangle.split.2x1", tooltip: "Split Editor Right (⌘\\)", target: nil, action: nil)
     let closeGroupButton = Theme.button("xmark", tooltip: "Close editor group", target: nil, action: nil)
     private let tabs = EditorTabs()
@@ -15,8 +17,17 @@ final class EditorView: NSView, NSSplitViewDelegate {
     private var session = ReaderSession()
     private var snapshot: FileSnapshot?
     private var renderedDiff = false
+    private var needsRender = false
     private var changeIndex = -1
     private var markdownSourcePaths: Set<String> = []
+    private var readingHistory = ReadingHistory()
+    private var savedPositions: [ReadingDocument: ReadingLocation] = [:]
+    private var pendingRestore: ReadingLocation?
+    private var pendingArrival = false
+    private var recordArrival = true
+    var canGoBack: Bool { readingHistory.canGoBack }
+    var canGoForward: Bool { readingHistory.canGoForward }
+    var allowsNavigation = true { didSet { updateNavigationButtons() } }
     var showingMarkdownPreview: Bool { !markdown.isHidden }
     private(set) var showingDiff = false
     var activeComparison: GitComparison? { session.activeDocument?.comparison }
@@ -32,6 +43,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     var onLastTabClosed: (() -> Void)?
     var onOpenFolder: (() -> Void)?
     var onCursor: (((line: Int, character: Int)) -> Void)?
+    var onRestoreLocation: ((ReadingLocation) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -46,13 +58,17 @@ final class EditorView: NSView, NSSplitViewDelegate {
         groupActions.orientation = .horizontal
         groupActions.spacing = 4
         groupActions.alignment = .centerY
-        for button in [splitEditorButton, closeGroupButton] {
+        let navigation = NSStackView(views: [backButton, forwardButton])
+        navigation.orientation = .horizontal
+        navigation.spacing = 0
+        for button in [splitEditorButton, closeGroupButton, backButton, forwardButton] {
             button.widthAnchor.constraint(equalToConstant: 28).isActive = true
             button.heightAnchor.constraint(equalToConstant: 28).isActive = true
         }
-        add(tabs, breadcrumbs, split, markdown, message, welcome, groupActions)
+        add(tabs, breadcrumbs, split, markdown, message, welcome, navigation, groupActions)
         NSLayoutConstraint.activate([
-            tabs.topAnchor.constraint(equalTo: topAnchor), tabs.leadingAnchor.constraint(equalTo: leadingAnchor), tabs.trailingAnchor.constraint(equalTo: groupActions.leadingAnchor, constant: -4), tabs.heightAnchor.constraint(equalToConstant: 40),
+            navigation.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4), navigation.topAnchor.constraint(equalTo: topAnchor, constant: 8), navigation.heightAnchor.constraint(equalToConstant: 32),
+            tabs.topAnchor.constraint(equalTo: topAnchor), tabs.leadingAnchor.constraint(equalTo: navigation.trailingAnchor, constant: 4), tabs.trailingAnchor.constraint(equalTo: groupActions.leadingAnchor, constant: -4), tabs.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
             groupActions.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8), groupActions.topAnchor.constraint(equalTo: topAnchor, constant: 8), groupActions.heightAnchor.constraint(equalToConstant: 32),
             breadcrumbs.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 4), breadcrumbs.leadingAnchor.constraint(equalTo: leadingAnchor), breadcrumbs.trailingAnchor.constraint(equalTo: trailingAnchor), breadcrumbs.heightAnchor.constraint(equalToConstant: 28),
             split.topAnchor.constraint(equalTo: breadcrumbs.bottomAnchor, constant: 4), split.leadingAnchor.constraint(equalTo: leadingAnchor), split.trailingAnchor.constraint(equalTo: trailingAnchor), split.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -63,11 +79,14 @@ final class EditorView: NSView, NSSplitViewDelegate {
         tabs.onSelect = { [weak self] document in self?.onSelectFile?(document.path, document.comparison) }
         splitEditorButton.target = self; splitEditorButton.action = #selector(splitEditor)
         closeGroupButton.target = self; closeGroupButton.action = #selector(closeGroup)
+        backButton.target = self; backButton.action = #selector(goBack)
+        forwardButton.target = self; forwardButton.action = #selector(goForward)
         configureGroup(split: false, focused: true)
         splitEditorButton.isEnabled = false
         tabs.onClose = { [weak self] document in self?.close(document) }
         tabs.onCloseGroup = { [weak self] document, scope in
             guard let self else { return }
+            self.saveReadingPosition()
             self.finishClosing(self.session.close(scope, relativeTo: document))
         }
         tabs.onMove = { [weak self] document, index in
@@ -80,6 +99,10 @@ final class EditorView: NSView, NSSplitViewDelegate {
         left.onScroll = { [weak self] point in if self?.showingDiff == true { self?.right.sync(to: point) } }
         right.onScroll = { [weak self] point in if self?.showingDiff == true { self?.left.sync(to: point) } }
         right.text.onCursor = { [weak self] index in guard let self, let position = self.right.position(at: index) else { return }; self.onCursor?(position) }
+        markdown.onRendered = { [weak self] in
+            guard let self else { return }
+            self.completeArrival(fallback: self.pendingRestore)
+        }
         reset()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -96,10 +119,17 @@ final class EditorView: NSView, NSSplitViewDelegate {
     @objc private func splitEditor() { onSplitEditor?() }
     @objc private func closeGroup() { onCloseGroup?() }
 
-    func prepare(path: String, diff: Bool, isGit: Bool, comparison: GitComparison = .workingTree) {
+    func prepare(path: String, diff: Bool, isGit: Bool, comparison: GitComparison = .workingTree, restoring location: ReadingLocation? = nil, recordNavigation: Bool = true) {
+        if recordNavigation { saveReadingPosition() }
         right.text.cancelNavigationFlash()
         right.text.resetSymbolFeedback()
         session.open(path, comparison: diff && isGit ? comparison : nil)
+        pendingRestore = location ?? session.activeDocument.flatMap { savedPositions[$0] }
+        pendingArrival = true
+        recordArrival = recordNavigation
+        if let pendingRestore, MarkdownRenderer.supports(path) {
+            if pendingRestore.preview { markdownSourcePaths.remove(path) } else { markdownSourcePaths.insert(path) }
+        }
         showingDiff = diff && isGit
         tabs.show(session)
         breadcrumbs.path.stringValue = path.replacingOccurrences(of: "/", with: "  ›  ")
@@ -112,13 +142,15 @@ final class EditorView: NSView, NSSplitViewDelegate {
 
     func show(_ next: FileSnapshot, diff: Bool, preserveScroll: Bool, position: (Int, Int)? = nil, highlightDestination: Bool = false) {
         guard activePath == next.path, next.comparison == activeComparison || next.comparison == nil else { return }
-        let scrollPosition = right.scroll.contentView.bounds.origin
-        let unchanged = snapshot == next && renderedDiff == diff
+        let restoration = pendingArrival ? pendingRestore : preserveScroll ? readingLocation() : nil
+        if let restoration { savedPositions[restoration.document] = restoration }
+        let unchanged = snapshot == next && renderedDiff == diff && !needsRender
+        needsRender = false
         snapshot = next
         renderedDiff = diff
         showingDiff = diff
         welcome.isHidden = true
-        if let note = next.message { showMessage(note); return }
+        if let note = next.message { showMessage(note); completeArrival(fallback: restoration); return }
         message.isHidden = true
         split.isHidden = false
         left.isHidden = !diff
@@ -142,19 +174,25 @@ final class EditorView: NSView, NSSplitViewDelegate {
                 right.show(lines: lines, path: next.path, title: (next.path as NSString).lastPathComponent, detail: "READ ONLY", showsHeader: false)
                 split.adjustSubviews()
             }
-            right.sync(to: preserveScroll ? scrollPosition : .zero)
-            left.sync(to: preserveScroll ? scrollPosition : .zero)
+            right.resetScroll()
+            if diff { left.resetScroll() }
             if !preserveScroll { changeIndex = -1 }
         }
         breadcrumbs.showCounts(diff ? next : nil)
         let supportsPreview = MarkdownRenderer.supports(next.path) && !diff
         let preview = supportsPreview && !markdownSourcePaths.contains(next.path)
-        if supportsPreview && !unchanged { markdown.show(next.after) }
+        if supportsPreview && !unchanged { markdown.show(next.after, restoring: restoration?.markdown) }
         if !supportsPreview { markdown.clear() }
         markdown.isHidden = !preview
         split.isHidden = preview
         breadcrumbs.showMarkdownControls(supportsPreview, preview: preview)
+        if let restoration, !unchanged || pendingArrival {
+            right.restore(restoration.right)
+            if diff { left.restore(restoration.left) }
+            if supportsPreview && unchanged, !markdown.isRendering { markdown.restore(restoration.markdown) }
+        }
         if let position { right.reveal(line: position.0, character: position.1, highlightDestination: highlightDestination) }
+        if !markdown.isRendering { completeArrival(fallback: restoration) }
     }
 
     func showError(_ error: Error) { snapshot = nil; showMessage(error.localizedDescription) }
@@ -168,13 +206,17 @@ final class EditorView: NSView, NSSplitViewDelegate {
         breadcrumbs.showCounts(nil)
     }
 
-    func reset() {
+    func reset(clearHistory: Bool = true) {
         session.reset()
         tabs.show(session)
         snapshot = nil
         showingDiff = false
         renderedDiff = false
+        needsRender = false
         markdownSourcePaths.removeAll()
+        pendingRestore = nil; pendingArrival = false
+        if clearHistory { readingHistory = ReadingHistory(); savedPositions = [:] }
+        updateNavigationButtons()
         markdown.clear()
         markdown.isHidden = true
         changeIndex = -1
@@ -199,6 +241,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         return true
     }
     private func close(_ document: ReadingDocument) {
+        saveReadingPosition()
         finishClosing(session.close(document))
     }
     private func finishClosing(_ wasActive: Bool) {
@@ -206,7 +249,75 @@ final class EditorView: NSView, NSSplitViewDelegate {
         guard wasActive else { return }
         snapshot = nil
         if let next = session.activeDocument { onSelectFile?(next.path, next.comparison) }
-        else { reset(); onLastTabClosed?() }
+        else { reset(clearHistory: false); onLastTabClosed?() }
+    }
+
+    func readingLocation() -> ReadingLocation? {
+        guard let document = session.activeDocument else { return nil }
+        guard let snapshot, snapshot.path == document.path,
+              snapshot.comparison == document.comparison else { return nil }
+        if snapshot.message != nil { return savedPositions[document] }
+        return ReadingLocation(document: document, right: right.readingPosition(), left: left.readingPosition(),
+            markdown: markdown.readingPosition(), preview: showingMarkdownPreview)
+    }
+
+    private func saveReadingPosition() {
+        guard let location = readingLocation() else { return }
+        savedPositions[location.document] = location
+        if pendingArrival && recordArrival { readingHistory.visit(location) }
+        else { readingHistory.updateCurrent(location) }
+        pendingArrival = false; pendingRestore = nil
+        updateNavigationButtons()
+    }
+
+    private func completeArrival(fallback: ReadingLocation?) {
+        if let location = readingLocation() ?? fallback {
+            savedPositions[location.document] = location
+            if pendingArrival && recordArrival { readingHistory.visit(location) }
+            else if !pendingArrival { readingHistory.updateCurrent(location) }
+        }
+        pendingArrival = false; pendingRestore = nil
+        updateNavigationButtons()
+    }
+
+    private func updateNavigationButtons() {
+        backButton.isEnabled = allowsNavigation && canGoBack
+        forwardButton.isEnabled = allowsNavigation && canGoForward
+    }
+
+    @objc func goBack() { moveHistory(forward: false) }
+    @objc func goForward() { moveHistory(forward: true) }
+    private func moveHistory(forward: Bool) {
+        guard allowsNavigation else { return }
+        let current = readingLocation()
+        if let current { savedPositions[current.document] = current }
+        guard let location = readingHistory.move(forward: forward, current: current) else { return }
+        updateNavigationButtons()
+        onRestoreLocation?(location)
+    }
+
+    func renamePaths(_ renames: [String: String]) {
+        guard !renames.isEmpty else { return }
+        saveReadingPosition()
+        session.renamePaths(renames)
+        readingHistory.renamePaths(renames)
+        var positions: [ReadingDocument: ReadingLocation] = [:]
+        for var location in savedPositions.values {
+            location.document = ReadingDocument(path: renames[location.document.path] ?? location.document.path, comparison: location.document.comparison)
+            positions[location.document] = location
+        }
+        savedPositions = positions
+        markdownSourcePaths = Set(markdownSourcePaths.map { renames[$0] ?? $0 })
+        if let old = snapshot, let path = renames[old.path] {
+            snapshot = FileSnapshot(path: path, before: old.before, after: old.after, rows: old.rows, message: old.message, isBinary: old.isBinary, comparison: old.comparison)
+            needsRender = true
+        }
+        if var location = pendingRestore {
+            location.document = ReadingDocument(path: renames[location.document.path] ?? location.document.path, comparison: location.document.comparison)
+            pendingRestore = location
+        }
+        tabs.show(session)
+        if let path = activePath { breadcrumbs.path.stringValue = path.replacingOccurrences(of: "/", with: "  ›  ") }
     }
 
     func navigateChange(forward: Bool) {

@@ -1,52 +1,52 @@
 import AppKit
 
 final class WorkspaceHeader: NSView {
-    let project = Theme.label("VCode", size: 14, weight: .semibold)
-    let branchButton = Theme.actionButton("Branch", symbol: "arrow.triangle.branch")
-    let worktreeButton = Theme.actionButton("Worktree", symbol: "folder")
+    let branchButton = Theme.actionButton("—", symbol: "arrow.triangle.branch")
+    let worktreeButton = Theme.actionButton("—", symbol: "folder")
     let openButton = Theme.actionButton("Open Folder", symbol: "folder.badge.plus")
     let historyButton = Theme.actionButton("Recent", symbol: "clock.arrow.circlepath")
-    let refreshButton = Theme.actionButton("Refresh", symbol: "arrow.clockwise")
     private var isGit = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        refreshButton.toolTip = "Refresh (⌘R)"
         openButton.toolTip = "Open Folder (⌘O)"
         historyButton.toolTip = "Recently opened projects and worktrees"
-        project.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        branchButton.setAccessibilityLabel("Branch")
+        worktreeButton.setAccessibilityLabel("Worktree")
+        worktreeButton.title = "VCode"
+        worktreeButton.font = .systemFont(ofSize: 14, weight: .semibold)
+        worktreeButton.disabledTint = Theme.text
+        worktreeButton.toolTip = "Open a folder to begin"
         for button in [branchButton, worktreeButton] {
             button.horizontalPadding = Theme.Layout.moduleGap
             button.isEnabled = false
             button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             (button.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingMiddle
         }
-        add(project, branchButton, worktreeButton, historyButton, openButton, refreshButton)
+        worktreeButton.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(252), for: .horizontal)
+        add(worktreeButton, branchButton, historyButton, openButton)
         NSLayoutConstraint.activate([
-            project.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 96), project.centerYAnchor.constraint(equalTo: centerYAnchor), project.widthAnchor.constraint(lessThanOrEqualToConstant: 240), project.widthAnchor.constraint(greaterThanOrEqualToConstant: 64),
-            branchButton.leadingAnchor.constraint(equalTo: project.trailingAnchor, constant: 16), branchButton.centerYAnchor.constraint(equalTo: centerYAnchor), branchButton.widthAnchor.constraint(lessThanOrEqualToConstant: 200), branchButton.heightAnchor.constraint(equalToConstant: 32),
-            worktreeButton.leadingAnchor.constraint(equalTo: branchButton.trailingAnchor, constant: 8), worktreeButton.centerYAnchor.constraint(equalTo: centerYAnchor), worktreeButton.widthAnchor.constraint(lessThanOrEqualToConstant: 200), worktreeButton.heightAnchor.constraint(equalToConstant: 32), worktreeButton.trailingAnchor.constraint(lessThanOrEqualTo: historyButton.leadingAnchor, constant: -16),
+            worktreeButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 96), worktreeButton.centerYAnchor.constraint(equalTo: centerYAnchor), worktreeButton.widthAnchor.constraint(lessThanOrEqualToConstant: 320), worktreeButton.heightAnchor.constraint(equalToConstant: 32),
+            branchButton.leadingAnchor.constraint(equalTo: worktreeButton.trailingAnchor, constant: 8), branchButton.centerYAnchor.constraint(equalTo: centerYAnchor), branchButton.widthAnchor.constraint(lessThanOrEqualToConstant: 200), branchButton.heightAnchor.constraint(equalToConstant: 32), branchButton.trailingAnchor.constraint(lessThanOrEqualTo: historyButton.leadingAnchor, constant: -16),
             historyButton.trailingAnchor.constraint(equalTo: openButton.leadingAnchor, constant: -8), historyButton.centerYAnchor.constraint(equalTo: centerYAnchor), historyButton.heightAnchor.constraint(equalToConstant: 32),
-            refreshButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16), refreshButton.centerYAnchor.constraint(equalTo: centerYAnchor), refreshButton.heightAnchor.constraint(equalToConstant: 32),
-            openButton.trailingAnchor.constraint(equalTo: refreshButton.leadingAnchor, constant: -8), openButton.centerYAnchor.constraint(equalTo: centerYAnchor), openButton.heightAnchor.constraint(equalToConstant: 32)
+            openButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16), openButton.centerYAnchor.constraint(equalTo: centerYAnchor), openButton.heightAnchor.constraint(equalToConstant: 32)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
     func show(_ state: WorkspaceState) {
         isGit = state.isGit
-        project.stringValue = state.root.lastPathComponent
-        branchButton.title = state.isGit ? "Branch · " + state.branch : "Branch"
-        worktreeButton.title = "Worktree · " + state.root.lastPathComponent
+        branchButton.title = state.isGit ? state.branch : "—"
+        worktreeButton.title = state.root.lastPathComponent
         branchButton.toolTip = state.isGit ? "Switch local branch · " + state.branch : "Open a Git repository to switch branches"
-        worktreeButton.toolTip = "Switch worktree · " + state.root.path
+        worktreeButton.toolTip = (state.isGit ? "Switch worktree · " : "Current folder · ") + state.root.path
+        worktreeButton.setAccessibilityLabel(state.isGit ? "Worktree" : "Current folder")
         setBusy(false)
     }
     func setBusy(_ busy: Bool) {
         branchButton.isEnabled = isGit && !busy
         worktreeButton.isEnabled = isGit && !busy
         openButton.isEnabled = !busy
-        refreshButton.isEnabled = !busy
         historyButton.isEnabled = !busy
     }
 }

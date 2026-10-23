@@ -1,6 +1,6 @@
 import AppKit
 
-final class WorkspaceController: NSViewController {
+final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     private let workspace = WorkspaceView()
     private let session = WorkspaceSession()
     private let language = LanguageService()
@@ -13,7 +13,7 @@ final class WorkspaceController: NSViewController {
     private var observer: NSObjectProtocol?
     private var picker: NSPopover?
     private var pickerRequest = UUID()
-    private var displayedBranch: String?
+    private var displayedState: WorkspaceState?
     private let history: WorkspaceHistoryStore
     private var historyPicker: WorkspaceHistoryPicker?
     private var historyMonitor: Any?
@@ -42,7 +42,6 @@ final class WorkspaceController: NSViewController {
             self?.workspace.status.message.toolTip = message
         }
         workspace.header.openButton.target = self; workspace.header.openButton.action = #selector(openFolder)
-        workspace.header.refreshButton.target = self; workspace.header.refreshButton.action = #selector(refresh)
         workspace.header.branchButton.target = self; workspace.header.branchButton.action = #selector(showBranches)
         workspace.header.worktreeButton.target = self; workspace.header.worktreeButton.action = #selector(showWorktrees)
         workspace.header.historyButton.target = self; workspace.header.historyButton.action = #selector(showHistory)
@@ -100,10 +99,8 @@ final class WorkspaceController: NSViewController {
         }
         session.onOpen = { [weak self] state in
             guard let self else { return }
-            self.workspace.editorGroups.reset()
             self.history.record(state)
-            self.displayedBranch = state.branch
-            self.workspace.show(state, changesOnly: self.changesOnly)
+            self.applyState(state)
             if let error = self.history.persistenceError { self.workspace.status.message.stringValue = error }
             self.view.window?.representedURL = state.root
             self.view.window?.title = "\(state.root.lastPathComponent) — VCode"
@@ -111,14 +108,7 @@ final class WorkspaceController: NSViewController {
         session.onRefresh = { [weak self] state in
             guard let self else { return }
             self.history.update(state)
-            if self.displayedBranch != state.branch {
-                self.resetReading()
-                self.displayedBranch = state.branch
-            }
-            self.workspace.show(state, changesOnly: self.changesOnly)
-            for editor in self.workspace.editorGroups.editors {
-                if let path = editor.activePath { self.loadFile(path, diff: editor.showingDiff, comparison: editor.activeComparison ?? .workingTree, preserveScroll: true, editor: editor) }
-            }
+            self.applyState(state)
         }
         session.onError = { [weak self] error in self?.workspace.status.message.stringValue = error.localizedDescription }
         if let error = history.persistenceError {
@@ -127,7 +117,38 @@ final class WorkspaceController: NSViewController {
         }
     }
 
+    private func applyState(_ state: WorkspaceState) {
+        let previous = displayedState
+        if previous?.root != state.root { resetReading() }
+        else if previous?.branch != state.branch {
+            inspectToken = UUID(); hoverRequest = UUID()
+            inspection.dismiss(); language.stop()
+        }
+        let renames = previous.map { state.renames(from: $0) } ?? [:]
+        let renamedActive = workspace.editor.activePath.map { renames[$0] != nil } ?? false
+        for editor in workspace.editorGroups.editors {
+            editor.allowsNavigation = true
+            editor.renamePaths(renames)
+        }
+        displayedState = state
+        workspace.show(state, changesOnly: changesOnly)
+        for editor in workspace.editorGroups.editors {
+            if let path = editor.activePath {
+                loadFile(path, diff: editor.showingDiff, comparison: editor.activeComparison ?? .workingTree, preserveScroll: true, editor: editor)
+            }
+        }
+        if renamedActive, let path = workspace.editor.activePath { workspace.explorer.select(path, comparison: workspace.editor.activeComparison) }
+    }
+
     private func configureEditor(_ editor: EditorView) {
+        editor.allowsNavigation = session.state != nil && !session.isSwitching
+        editor.onRestoreLocation = { [weak self, weak editor] location in
+            guard let self, let editor else { return }
+            self.workspace.editorGroups.activate(editor, focus: true)
+            self.openFile(location.document.path, diff: location.document.comparison != nil,
+                comparison: location.document.comparison ?? .workingTree, editor: editor, restoring: location)
+            self.workspace.explorer.select(location.document.path, comparison: location.document.comparison)
+        }
         editor.onOpenFolder = { [weak self] in self?.openFolder() }
         editor.onSelectFile = { [weak self, weak editor] path, comparison in
             guard let self, let editor else { return }
@@ -212,6 +233,7 @@ final class WorkspaceController: NSViewController {
         inspectToken = UUID()
         language.stop()
         workspace.status.message.stringValue = "Opening folder…"
+        workspace.editorGroups.editors.forEach { $0.allowsNavigation = false }
         session.open(folder)
     }
     @objc func refresh() { session.refresh() }
@@ -223,12 +245,12 @@ final class WorkspaceController: NSViewController {
         if let state = session.state { workspace.explorer.show(state, changesOnly: changes) }
     }
 
-    func openFile(_ path: String, diff: Bool, comparison: GitComparison = .workingTree, line: Int? = nil, character: Int = 0, highlightDestination: Bool = false, editor: EditorView? = nil) {
+    func openFile(_ path: String, diff: Bool, comparison: GitComparison = .workingTree, line: Int? = nil, character: Int = 0, highlightDestination: Bool = false, editor: EditorView? = nil, restoring location: ReadingLocation? = nil) {
         guard let state = session.state, !session.isSwitching else { return }
         let editor = editor ?? workspace.editor
         inspectToken = UUID()
         inspection.dismiss()
-        editor.prepare(path: path, diff: diff, isGit: state.isGit, comparison: comparison)
+        editor.prepare(path: path, diff: diff, isGit: state.isGit, comparison: comparison, restoring: location, recordNavigation: location == nil)
         refreshLanguageStatus()
         loadFile(path, diff: editor.showingDiff, comparison: comparison, position: line.map { ($0, character) }, highlightDestination: highlightDestination, editor: editor)
     }
@@ -262,14 +284,34 @@ final class WorkspaceController: NSViewController {
         syncLanguage(for: editor)
         let token = inspectToken
         let hoverToken = hoverRequest
+        let source = editor.right.text.string
+        let comparison = editor.activeComparison
+        let documentURL = root.appendingPathComponent(path).standardizedFileURL
+        let identifier = CodeTextView.identifier(in: source as NSString, at: index)
         if kind == .references { workspace.status.message.stringValue = "Finding references…"; inspection.dismiss() }
         language.inspect(url: root.appendingPathComponent(path), line: position.line, character: position.character, kind: kind) { [weak self, weak editor] result in
             guard let self, let editor, self.inspectToken == token, self.inspectionEditor === editor, editor.activePath == path,
+                  self.session.reader?.root == root, !self.session.isSwitching,
+                  editor.activeComparison == comparison, editor.right.text.string == source,
                   self.workspace.editorGroups.editors.contains(where: { $0 === editor }),
                   kind != .hover || self.hoverRequest == hoverToken else { return }
             switch result {
             case .failure(let error): if kind != .hover { self.workspace.status.message.stringValue = error.localizedDescription }
             case .success(let value):
+                // Definition results identify the declaration semantically. The
+                // mouse can hit any UTF-16 position inside its identifier, so an
+                // exact click/start comparison would miss most declaration clicks.
+                if kind == .definition, let identifier, case .locations(let locations) = value,
+                   locations.contains(where: { location in
+                       guard location.url.standardizedFileURL == documentURL,
+                             let target = editor.right.characterRange(startLine: location.line, startCharacter: location.character,
+                                 endLine: location.line, endCharacter: location.character + 1) else { return false }
+                       return NSLocationInRange(target.location, identifier)
+                   }) {
+                    editor.right.text.cancelNavigationFlash()
+                    self.inspect(index: index, kind: "references", editor: editor)
+                    return
+                }
                 if kind == .references, case .locations(let locations) = value {
                     self.workspace.status.message.stringValue = "\(Set(locations).count) references"
                 }
@@ -319,6 +361,13 @@ final class WorkspaceController: NSViewController {
         else { view.window?.performClose(nil) }
     }
     @objc func splitEditorRight() { workspace.editorGroups.splitActiveEditor() }
+    @objc func goBack() { workspace.editor.goBack() }
+    @objc func goForward() { workspace.editor.goForward() }
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(goBack) { return !session.isSwitching && workspace.editor.canGoBack }
+        if item.action == #selector(goForward) { return !session.isSwitching && workspace.editor.canGoForward }
+        return true
+    }
     @objc func nextChange() { workspace.editor.navigateChange(forward: true) }
     @objc func previousChange() { workspace.editor.navigateChange(forward: false) }
     @objc func showBranches() { showPicker(.branches, anchor: workspace.header.branchButton) }
@@ -428,7 +477,9 @@ final class WorkspaceController: NSViewController {
         workspace.header.setBusy(true)
         workspace.explorer.outline.isEnabled = false
         workspace.status.message.stringValue = "Switching repository context…"
+        workspace.editorGroups.editors.forEach { $0.allowsNavigation = false }
         session.activate(destination) { [weak self] result in
+            self?.workspace.editorGroups.editors.forEach { $0.allowsNavigation = true }
             self?.workspace.header.setBusy(false)
             self?.workspace.explorer.outline.isEnabled = true
             if case .failure(let error) = result { self?.workspace.status.message.stringValue = error.localizedDescription }

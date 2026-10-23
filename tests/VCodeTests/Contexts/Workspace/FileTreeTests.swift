@@ -38,6 +38,7 @@ final class FileTreeTests: XCTestCase {
                     XCTAssertEqual(cell.badge.stringValue, row == 0 ? "0" : "137")
                     let badgeInScroll = cell.badge.convert(cell.badge.bounds, to: scroll)
                     if let scroller = scroll.verticalScroller, !scroller.isHidden {
+                        XCTAssertLessThan(scroller.frame.width, NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy), "Reserve a slimmer native track without covering the count")
                         XCTAssertLessThan(badgeInScroll.maxX, scroller.frame.minX)
                     }
                 }

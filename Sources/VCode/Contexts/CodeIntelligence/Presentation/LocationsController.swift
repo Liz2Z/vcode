@@ -56,6 +56,7 @@ final class LocationsController: NSViewController, NSTableViewDataSource, NSTabl
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
+        Theme.compactScrollers(scroll)
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         view.add(scroll, summary, empty)

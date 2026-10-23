@@ -50,6 +50,10 @@ final class CodePane: NSView {
         scroll.documentView = text
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
+        Theme.compactScrollers(scroll)
+        // Legacy corner views are inserted when both scrollers appear. During
+        // a checkout relayout AppKit can reject their new constraints.
+        scroll.scrollerStyle = .overlay
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
         scroll.backgroundColor = Theme.background
@@ -93,11 +97,30 @@ final class CodePane: NSView {
         var offset = 0
         offsets = lines.map { line in defer { offset += (line.text as NSString).length + 1 }; return offset }
         text.string = lines.isEmpty ? "" : lines.map(\.text).joined(separator: "\n") + "\n"
+        text.setSelectedRange(NSRange(location: 0, length: 0))
         if let storage = text.textStorage {
             Syntax.apply(to: storage, path: path, font: Theme.Code.font())
         }
         gutter.needsDisplay = true
         text.needsDisplay = true
+    }
+
+    func resetScroll() {
+        layoutSubtreeIfNeeded()
+        let insets = scroll.contentView.contentInsets
+        scrollTo(NSPoint(x: -insets.left, y: -insets.top))
+    }
+
+    private func scrollTo(_ point: NSPoint) {
+        isSyncing = true
+        let clip = scroll.contentView
+        // AppKit overlays the ruler inside the clip view and reserves it using
+        // contentInsets. The unscrolled x is negative, not zero. Let AppKit
+        // constrain both axes so restoration cannot slide text under the ruler.
+        let proposed = NSRect(origin: point, size: clip.bounds.size)
+        clip.scroll(to: clip.constrainBoundsRect(proposed).origin)
+        scroll.reflectScrolledClipView(clip)
+        isSyncing = false
     }
 
     func sync(to point: NSPoint) {
@@ -107,6 +130,54 @@ final class CodePane: NSView {
         clip.scroll(to: NSPoint(x: clip.bounds.minX, y: min(point.y, maxY)))
         scroll.reflectScrolledClipView(clip)
         isSyncing = false
+    }
+
+    func readingPosition() -> PaneReadingPosition {
+        let source = lines.filter { $0.number != nil }.map(\.text)
+        func anchor(_ index: Int) -> ReadingTextAnchor {
+            let point = position(at: index) ?? (line: 0, character: 0)
+            return ReadingTextAnchor(line: point.line, character: point.character, lines: source)
+        }
+        let origin = scroll.contentView.bounds.origin
+        let character: Int
+        if let layout = text.layoutManager, let container = text.textContainer {
+            layout.ensureLayout(for: container)
+            let glyph = layout.glyphIndex(for: NSPoint(x: 0, y: max(0, origin.y - text.textContainerOrigin.y)), in: container)
+            character = glyph < layout.numberOfGlyphs ? layout.characterIndexForGlyph(at: glyph) : 0
+        } else { character = 0 }
+        let row = offsets.lastIndex(where: { $0 <= character }) ?? 0
+        let sourceRow = lines.indices.dropFirst(row).first { lines[$0].number != nil }
+            ?? lines.indices.reversed().first { lines[$0].number != nil } ?? 0
+        let line = lines.indices.contains(sourceRow) ? (lines[sourceRow].number ?? 1) - 1 : 0
+        let selection = text.selectedRange()
+        let topY = offsets.indices.contains(sourceRow) ? self.topY(for: offsets[sourceRow]) : 0
+        return PaneReadingPosition(start: anchor(selection.location), end: anchor(NSMaxRange(selection)),
+            top: ReadingTextAnchor(line: line, lines: source),
+            verticalOffset: origin.y - topY,
+            horizontalOffset: origin.x)
+    }
+
+    func restore(_ position: PaneReadingPosition) {
+        let source = lines.filter { $0.number != nil }.map(\.text)
+        func location(_ anchor: ReadingTextAnchor) -> Int {
+            let line = anchor.resolvedLine(in: source)
+            guard let row = lines.firstIndex(where: { $0.number == line + 1 }) else { return 0 }
+            return offsets[row] + min(anchor.character, (lines[row].text as NSString).length)
+        }
+        let start = location(position.start), end = location(position.end)
+        text.setSelectedRange(NSRange(location: min(start, end), length: abs(end - start)))
+        layoutSubtreeIfNeeded()
+        if let container = text.textContainer { text.layoutManager?.ensureLayout(for: container) }
+        let topLine = position.top.resolvedLine(in: source)
+        let row = lines.firstIndex { $0.number == topLine + 1 } ?? 0
+        let y = (offsets.indices.contains(row) ? topY(for: offsets[row]) : 0) + position.verticalOffset
+        scrollTo(NSPoint(x: position.horizontalOffset, y: y))
+    }
+
+    private func topY(for character: Int) -> Double {
+        guard let layout = text.layoutManager, character < (text.string as NSString).length else { return text.textContainerOrigin.y }
+        let glyph = layout.glyphIndexForCharacter(at: character)
+        return text.textContainerOrigin.y + layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
     }
 
     func position(at index: Int) -> (line: Int, character: Int)? {

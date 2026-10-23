@@ -33,7 +33,7 @@ final class WorkspaceSession {
                 case .success(let (reader, state)):
                     self.reader = reader
                     self.state = state
-                    self.watcher = FolderWatcher(root: reader.root) { [weak self] in self?.refresh() }
+                    self.watch(state)
                     self.onOpen?(state)
                 case .failure(let error): self.onError?(error)
                 }
@@ -53,7 +53,7 @@ final class WorkspaceSession {
                 self.refreshing = false
                 switch result {
                 case .success(let state):
-                    if self.state?.branch != state.branch { self.invalidateDocument() }
+                    self.invalidateDocument()
                     self.state = state; self.onRefresh?(state)
                 case .failure(let error): self.onError?(error)
                 }
@@ -116,16 +116,19 @@ final class WorkspaceSession {
                 case .success(let (target, state)):
                     self.reader = target
                     self.state = state
-                    self.watcher = FolderWatcher(root: target.root) { [weak self] in self?.refresh() }
+                    self.watch(state)
                     self.onOpen?(state)
                     completion(.success(state))
                 case .failure(let error):
-                    self.watcher = FolderWatcher(root: reader.root) { [weak self] in self?.refresh() }
+                    if let state = self.state { self.watch(state) }
                     completion(.failure(error))
                     self.refresh()
                 }
             }
         }
+    }
+    private func watch(_ state: WorkspaceState) {
+        watcher = FolderWatcher(root: state.root, additionalRoots: state.project.map { [$0.commonDirectory] } ?? []) { [weak self] in self?.refresh() }
     }
     func close() {
         generation = UUID()

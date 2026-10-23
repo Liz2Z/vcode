@@ -108,6 +108,7 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         let scroll = NSScrollView()
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
+        Theme.compactScrollers(scroll)
         scroll.hasHorizontalScroller = false
         // Keep the scrollbar in its own gutter instead of covering row content.
         scroll.scrollerStyle = .legacy
@@ -135,7 +136,7 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     func show(_ state: WorkspaceState, changesOnly: Bool) {
-        let switching = self.changesOnly != changesOnly || self.state?.root != state.root || self.state?.branch != state.branch
+        let switching = self.changesOnly != changesOnly || self.state?.root != state.root
         let unchanged = !switching && self.state?.files == state.files && self.state?.changes == state.changes && appliedQuery == filter.stringValue
         self.state = state
         self.changesOnly = changesOnly

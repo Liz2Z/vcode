@@ -6,6 +6,8 @@ final class FileBrowser {
 
     init(root: URL) throws { store = try SourceFileStore(root: root) }
     func list(excluding paths: Set<String> = []) throws -> [String] { try store.list(excluding: paths) }
+    func listing(excluding paths: Set<String> = []) throws -> FileListing { try store.listing(excluding: paths) }
+    func exists(_ path: String) -> Bool { store.exists(path) }
     func read(_ path: String, maximumByteCount: Int) throws -> SourceContent {
         try store.read(path, maximumByteCount: maximumByteCount)
     }

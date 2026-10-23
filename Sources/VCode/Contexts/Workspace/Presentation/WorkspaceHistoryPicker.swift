@@ -44,6 +44,7 @@ final class WorkspaceHistoryPicker: NSViewController, NSTableViewDataSource, NST
         table.onEscape = { [weak self] in self?.onDismiss?() }
         scroll.documentView = table
         scroll.hasVerticalScroller = true
+        Theme.compactScrollers(scroll)
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         view.add(title, filter, scroll, empty)
@@ -68,6 +69,7 @@ final class WorkspaceHistoryPicker: NSViewController, NSTableViewDataSource, NST
         let height = rows.isEmpty ? 0 : table.rect(ofRow: rows.count - 1).maxY
         let overflowing = height > scroll.contentSize.height + 0.5
         if scroll.hasVerticalScroller != overflowing { scroll.hasVerticalScroller = overflowing }
+        Theme.compactScrollers(scroll)
     }
 
     private func applyFilter() {

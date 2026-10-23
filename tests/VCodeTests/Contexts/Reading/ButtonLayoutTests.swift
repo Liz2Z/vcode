@@ -27,7 +27,7 @@ final class ButtonLayoutTests: XCTestCase {
     }
 
     func testIconAndTitleStayCenteredWhenTruncatedOrStateChanges() throws {
-        let button = Theme.actionButton("Worktree", symbol: "folder")
+        let button = Theme.actionButton("—", symbol: "folder")
         button.horizontalPadding = 12
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 80), styleMask: [.borderless], backing: .buffered, defer: false)
         let host = NSView()
@@ -38,7 +38,7 @@ final class ButtonLayoutTests: XCTestCase {
         let stack = try XCTUnwrap(button.subviews.compactMap { $0 as? NSStackView }.first)
         let image = try XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? NSImageView }.first)
         let label = try XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? NSTextField }.first)
-        for title in ["Worktree · idev-002", "Worktree · a-very-long-worktree-name-that-must-be-truncated"] {
+        for title in ["idev-002", "a-very-long-worktree-name-that-must-be-truncated"] {
             button.title = title
             for availableWidth: CGFloat in [200, 120] {
                 width.constant = availableWidth

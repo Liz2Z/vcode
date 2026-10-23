@@ -3,6 +3,7 @@ import AppKit
 final class FeedbackButton: NSButton {
     var isSelected = false { didSet { updateFeedback() } }
     var normalTint = Theme.muted { didSet { updateFeedback() } }
+    var disabledTint: NSColor? { didSet { updateFeedback() } }
     var feedbackRadius: CGFloat = Theme.Layout.controlRadius { didSet { updateFeedback() } }
     var horizontalPadding: CGFloat = 10 {
         didSet {
@@ -119,10 +120,16 @@ final class FeedbackButton: NSButton {
         let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
         addTrackingArea(area)
         tracking = area
+        refreshHover()
     }
 
-    override func mouseEntered(with event: NSEvent) { hovered = true; updateFeedback() }
-    override func mouseExited(with event: NSEvent) { hovered = false; updateFeedback() }
+    func refreshHover() {
+        hovered = containsVisibleWindowMouse
+        updateFeedback()
+    }
+
+    override func mouseEntered(with event: NSEvent) { refreshHover() }
+    override func mouseExited(with event: NSEvent) { refreshHover() }
 
     override func mouseDown(with event: NSEvent) {
         guard isEnabled else { return }
@@ -144,7 +151,7 @@ final class FeedbackButton: NSButton {
         layer?.backgroundColor = fill.cgColor
         layer?.borderWidth = focused && isEnabled ? 1 : 0
         layer?.borderColor = Theme.accent.cgColor
-        contentTintColor = !isEnabled ? Theme.muted.withAlphaComponent(0.7) : (pressed || isSelected ? Theme.accent : hovered ? Theme.text : normalTint)
+        contentTintColor = !isEnabled ? (disabledTint ?? Theme.muted.withAlphaComponent(0.7)) : (pressed || isSelected ? Theme.accent : hovered ? Theme.text : normalTint)
         icon.contentTintColor = contentTintColor
         label.textColor = contentTintColor
         needsDisplay = true
@@ -153,4 +160,14 @@ final class FeedbackButton: NSButton {
 
 private final class ButtonTitleField: NSTextField {
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsets() }
+}
+
+extension NSView {
+    // A scrolled-out view can lose its tracking area without receiving an exit.
+    // Reconcile against the current pointer and clipped geometry instead of
+    // relying on the last tracking event's boolean state.
+    var containsVisibleWindowMouse: Bool {
+        guard let window, window.isKeyWindow, !isHiddenOrHasHiddenAncestor else { return false }
+        return visibleRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+    }
 }

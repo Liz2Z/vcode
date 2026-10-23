@@ -36,10 +36,19 @@ final class SourceFileStore {
         return url
     }
 
-    func list(excluding paths: Set<String> = []) throws -> [String] {
+    func list(excluding paths: Set<String> = []) throws -> [String] { try listing(excluding: paths).paths }
+
+    func exists(_ path: String) -> Bool {
+        guard let url = try? url(for: path) else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+
+    func listing(excluding paths: Set<String> = []) throws -> FileListing {
         let ignored: Set<String> = [".git", "node_modules", ".build", ".swiftpm", "dist", "build", ".DS_Store"]
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey]) else { return [] }
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileResourceIdentifierKey]
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: Array(keys)) else { return FileListing(paths: [], identities: [:]) }
         var files: [String] = []
+        var identities: [String: AnyHashable] = [:]
         // DirectoryEnumerator emits physical /private/var URLs even when
         // Foundation normalizes the root to /var. Resolve that prefix once.
         let physicalRoot = root.withUnsafeFileSystemRepresentation { path -> String in
@@ -52,7 +61,10 @@ final class SourceFileStore {
             let absolute = url.path
             guard absolute.hasPrefix(prefix) else { continue }
             let path = String(absolute.dropFirst(prefix.count))
-            let resource = try url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
+            // Files can disappear between enumeration and metadata lookup.
+            let resource: URLResourceValues
+            do { resource = try url.resourceValues(forKeys: keys) }
+            catch CocoaError.fileReadNoSuchFile { continue }
             if ignored.contains(url.lastPathComponent) || paths.contains(path) || paths.contains(path + "/") {
                 // On a regular file, skipDescendants can skip the next directory.
                 if resource.isDirectory == true { enumerator.skipDescendants() }
@@ -64,9 +76,10 @@ final class SourceFileStore {
                 // root is already canonical and links are never traversed, so
                 // there is no need to resolve every file's parent again.
                 files.append(path)
+                if let identity = resource.fileResourceIdentifier as? AnyHashable { identities[path] = identity }
             }
         }
-        return files.sorted()
+        return FileListing(paths: files.sorted(), identities: identities)
     }
 
 }

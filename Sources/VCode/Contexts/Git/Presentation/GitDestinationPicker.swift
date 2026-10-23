@@ -49,6 +49,7 @@ final class GitDestinationPicker: NSViewController, NSTableViewDataSource, NSTab
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
+        Theme.compactScrollers(scroll)
         scroll.drawsBackground = false
         empty.alignment = .center
         hint.maximumNumberOfLines = 3

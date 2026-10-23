@@ -119,6 +119,7 @@ final class InspectionPresenter: NSObject, NSWindowDelegate {
         let scroll = NSScrollView()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
+        Theme.compactScrollers(scroll)
         scroll.autohidesScrollers = true
         scroll.documentView = text
         surface.add(scroll)
