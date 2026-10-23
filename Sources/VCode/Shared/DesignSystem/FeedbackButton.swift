@@ -1,6 +1,6 @@
 import AppKit
 
-final class FeedbackButton: NSButton {
+final class FeedbackButton: PointingHandButton {
     var isSelected = false { didSet { updateFeedback() } }
     var normalTint = Theme.muted { didSet { updateFeedback() } }
     var disabledTint: NSColor? { didSet { updateFeedback() } }
@@ -125,6 +125,7 @@ final class FeedbackButton: NSButton {
 
     func refreshHover() {
         hovered = containsVisibleWindowMouse
+        window?.invalidateCursorRects(for: self)
         updateFeedback()
     }
 

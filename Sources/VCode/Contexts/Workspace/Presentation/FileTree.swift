@@ -56,7 +56,7 @@ final class FileCell: NSTableCellView {
 
 final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     let outline = FileOutlineView()
-    let heading = Theme.label("EXPLORER", size: 10, color: Theme.muted, weight: .semibold)
+    let heading = Theme.label("FILES", size: 10, color: Theme.muted, weight: .semibold)
     let count = Theme.label("", size: 10, color: Theme.muted)
     let emptyLabel = Theme.label("Open a folder to get started", color: Theme.muted)
     let filter = NSSearchField()
@@ -140,7 +140,7 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         let unchanged = !switching && self.state?.files == state.files && self.state?.changes == state.changes && appliedQuery == filter.stringValue
         self.state = state
         self.changesOnly = changesOnly
-        heading.stringValue = changesOnly ? "CHANGES" : "EXPLORER"
+        heading.stringValue = changesOnly ? "CHANGES" : "FILES"
         if unchanged { return }
         rebuild(reset: switching)
     }

@@ -300,6 +300,13 @@ private final class TabContent: NSView {
 
     override func mouseDown(with event: NSEvent) { onMouseDown?(event) }
 
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if onMouseDown != nil, !isHiddenOrHasHiddenAncestor, !visibleRect.isEmpty {
+            addCursorRect(visibleRect, cursor: .pointingHand)
+        }
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let tracking { removeTrackingArea(tracking) }
@@ -311,6 +318,7 @@ private final class TabContent: NSView {
 
     func refreshHover() {
         hovered = containsVisibleWindowMouse
+        window?.invalidateCursorRects(for: self)
         updateFeedback()
     }
 
@@ -324,7 +332,7 @@ private final class TabContent: NSView {
     }
 }
 
-private final class TabTitleButton: NSButton {
+private final class TabTitleButton: PointingHandButton {
     weak var activationView: NSView?
     var onPress: ((Bool) -> Void)?
     var onDrag: ((NSEvent) -> Void)?

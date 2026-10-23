@@ -52,27 +52,32 @@ final class WorkspaceHeader: NSView {
 }
 
 final class WorkspaceNavigation: NSView {
-    let files = Theme.actionButton("Files", symbol: "doc.on.doc")
-    let changes = Theme.actionButton("Changes", symbol: "arrow.triangle.branch")
+    let files = Theme.actionButton("Files")
+    let changes = Theme.actionButton("Changes")
+    let search = Theme.actionButton("Search")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         files.toolTip = "All files (⌘1)"
         changes.toolTip = "Changes (⌘2)"
-        // Both fixed titles must fit even at the sidebar's minimum width.
-        for button in [files, changes] { button.horizontalPadding = 8 }
-        add(files, changes)
+        search.toolTip = "Search in project (⌘⇧F)"
+        search.isEnabled = false
+        // Keep full titles at 220 points; equal widths yield to title minima.
+        for button in [files, changes, search] { button.horizontalPadding = 8 }
+        add(files, changes, search)
+        let equalWidths = [files.widthAnchor.constraint(equalTo: changes.widthAnchor), files.widthAnchor.constraint(equalTo: search.widthAnchor)]
+        equalWidths.forEach { $0.priority = .defaultHigh }
         NSLayoutConstraint.activate([
             files.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.Layout.controlGap), files.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Layout.controlGap), files.bottomAnchor.constraint(equalTo: bottomAnchor),
-            changes.leadingAnchor.constraint(equalTo: files.trailingAnchor, constant: 4), changes.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.Layout.controlGap), changes.topAnchor.constraint(equalTo: files.topAnchor), changes.bottomAnchor.constraint(equalTo: files.bottomAnchor),
-            files.widthAnchor.constraint(equalTo: changes.widthAnchor)
-        ])
+            changes.leadingAnchor.constraint(equalTo: files.trailingAnchor, constant: 4), changes.topAnchor.constraint(equalTo: files.topAnchor), changes.bottomAnchor.constraint(equalTo: files.bottomAnchor),
+            search.leadingAnchor.constraint(equalTo: changes.trailingAnchor, constant: 4), search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.Layout.controlGap), search.topAnchor.constraint(equalTo: files.topAnchor), search.bottomAnchor.constraint(equalTo: files.bottomAnchor)
+        ] + equalWidths)
         select(changes: false)
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func select(changes selected: Bool) {
-        for (button, active) in [(files, !selected), (changes, selected)] {
+    func select(changes selected: Bool?) {
+        for (button, active) in [(files, selected == false), (changes, selected == true), (search, selected == nil)] {
             button.isSelected = active
             button.setAccessibilityValue(active ? 1 : 0)
         }

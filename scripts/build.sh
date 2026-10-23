@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+bash scripts/prepare-ripgrep.sh
 
 if [[ ! -d Tools/TypeScript/node_modules/typescript-language-server ]]; then
     npm ci --prefix Tools/TypeScript --ignore-scripts --registry=https://registry.npmjs.org --no-audit --no-fund
@@ -21,6 +22,9 @@ cp -R Tools/TypeScript/node_modules "$app/Contents/Resources/TypeScript/"
 node_binary="$(node -p 'process.execPath')"
 mkdir -p "$app/Contents/Resources/Runtime"
 cp "$node_binary" "$app/Contents/Resources/Runtime/node"
+cp .build/search-runtime/rg "$app/Contents/Resources/Runtime/rg"
+mkdir -p "$app/Contents/Resources/Licenses/ripgrep"
+cp .build/search-runtime/LICENSE-MIT .build/search-runtime/UNLICENSE .build/search-runtime/COPYING "$app/Contents/Resources/Licenses/ripgrep/"
 node_license="$(dirname "$node_binary")/../LICENSE"
 if [[ -f "$node_license" ]]; then cp "$node_license" "$app/Contents/Resources/Runtime/LICENSE"; fi
 /usr/bin/swift scripts/MakeIcon.swift "$app/Contents/Resources/AppIcon.icns"

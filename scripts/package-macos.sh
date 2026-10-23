@@ -14,13 +14,14 @@ if [[ ! -d "$app" ]]; then
 fi
 
 # Check both native executables so an Intel Node cannot enter an arm64 package.
-for executable in "$app/Contents/MacOS/VCode" "$app/Contents/Resources/Runtime/node"; do
+for executable in "$app/Contents/MacOS/VCode" "$app/Contents/Resources/Runtime/node" "$app/Contents/Resources/Runtime/rg"; do
     if [[ "$(/usr/bin/lipo -archs "$executable")" != arm64 ]]; then
         echo "Expected an arm64 executable: $executable" >&2
         exit 1
     fi
 done
 test "$("$app/Contents/Resources/Runtime/node" -p 'process.arch')" = arm64
+"$app/Contents/Resources/Runtime/rg" --version
 test -f "$app/Contents/Resources/TypeScript/node_modules/typescript-language-server/lib/cli.mjs"
 test -f "$app/Contents/Resources/TypeScript/node_modules/typescript/lib/tsserver.js"
 /usr/bin/codesign --verify --deep --strict "$app"

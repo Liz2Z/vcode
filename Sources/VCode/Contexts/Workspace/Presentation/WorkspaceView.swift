@@ -7,6 +7,7 @@ final class WorkspaceView: NSView, NSSplitViewDelegate {
     let header = WorkspaceHeader()
     let navigation = WorkspaceNavigation()
     let status = WorkspaceStatus()
+    let searchHost = NSView()
     private let split = WorkspaceSplitView()
     private var editorMinimumWidth: NSLayoutConstraint!
 
@@ -14,11 +15,13 @@ final class WorkspaceView: NSView, NSSplitViewDelegate {
         super.init(frame: frameRect)
         Theme.fill(self, Theme.canvas)
         let sidebarContent = NSView()
-        sidebarContent.add(navigation, explorer)
+        sidebarContent.add(navigation, explorer, searchHost)
+        searchHost.isHidden = true
         let sidebar = GlassSurface(content: sidebarContent, radius: Theme.Layout.panelRadius)
         NSLayoutConstraint.activate([
             navigation.leadingAnchor.constraint(equalTo: sidebarContent.leadingAnchor), navigation.trailingAnchor.constraint(equalTo: sidebarContent.trailingAnchor), navigation.topAnchor.constraint(equalTo: sidebarContent.topAnchor), navigation.heightAnchor.constraint(equalToConstant: 40),
-            explorer.topAnchor.constraint(equalTo: navigation.bottomAnchor, constant: 4), explorer.leadingAnchor.constraint(equalTo: sidebarContent.leadingAnchor), explorer.trailingAnchor.constraint(equalTo: sidebarContent.trailingAnchor), explorer.bottomAnchor.constraint(equalTo: sidebarContent.bottomAnchor)
+            explorer.topAnchor.constraint(equalTo: navigation.bottomAnchor, constant: 4), explorer.leadingAnchor.constraint(equalTo: sidebarContent.leadingAnchor), explorer.trailingAnchor.constraint(equalTo: sidebarContent.trailingAnchor), explorer.bottomAnchor.constraint(equalTo: sidebarContent.bottomAnchor),
+            searchHost.topAnchor.constraint(equalTo: explorer.topAnchor), searchHost.leadingAnchor.constraint(equalTo: explorer.leadingAnchor), searchHost.trailingAnchor.constraint(equalTo: explorer.trailingAnchor), searchHost.bottomAnchor.constraint(equalTo: explorer.bottomAnchor)
         ])
         split.isVertical = true
         split.dividerStyle = .thin
@@ -45,8 +48,15 @@ final class WorkspaceView: NSView, NSSplitViewDelegate {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    func showSearch(_ visible: Bool) {
+        searchHost.isHidden = !visible; explorer.isHidden = visible
+        if visible { navigation.select(changes: nil) }
+    }
+
     func show(_ state: WorkspaceState, changesOnly: Bool) {
         editorGroups.setWorkspaceOpen(true)
+        navigation.select(changes: searchHost.isHidden ? changesOnly : nil)
+        navigation.search.isEnabled = true
         header.show(state)
         explorer.show(state, changesOnly: changesOnly)
         navigation.changes.toolTip = "Changes (⌘2) · \(state.changes.count) files"

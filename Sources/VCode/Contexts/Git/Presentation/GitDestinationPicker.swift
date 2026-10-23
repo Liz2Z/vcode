@@ -93,6 +93,7 @@ final class GitDestinationPicker: NSViewController, NSTableViewDataSource, NSTab
         busy = value
         filter.isEnabled = !value
         table.isEnabled = !value
+        table.invalidateRowCursorRects()
         refresh.isEnabled = !value
         hint.textColor = Theme.muted
         hint.toolTip = nil
@@ -120,7 +121,11 @@ final class GitDestinationPicker: NSViewController, NSTableViewDataSource, NSTab
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { options.count }
-    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { SelectionRowView() }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let view = SelectionRowView()
+        view.isActionEnabled = options[row].available && !options[row].current
+        return view
+    }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let option = options[row]
         let cell = DestinationCell()

@@ -13,6 +13,7 @@ final class WorkspaceHistoryStore {
         var entries: [RecentWorkspace] = []
         var lastFolder: URL?
         var window: WindowPlacement?
+        var recentFiles: [String: [String]]?
     }
     let file: URL
     private var stored = StoredState()
@@ -76,6 +77,28 @@ final class WorkspaceHistoryStore {
         guard stored.window != placement else { return }
         stored.window = placement
         persist()
+    }
+
+    func recentFiles(in root: URL) -> [String] { stored.recentFiles?[root.standardizedFileURL.path] ?? [] }
+
+    func recordFile(_ path: String, in root: URL) {
+        let key = root.standardizedFileURL.path
+        var recent = stored.recentFiles ?? [:]
+        if recent[key]?.first == path { return }
+        var files = recent[key] ?? []; files.removeAll { $0 == path }; files.insert(path, at: 0)
+        recent[key] = Array(files.prefix(100))
+        let availableRoots = Set(stored.entries.map { $0.root.standardizedFileURL.path } + [key])
+        stored.recentFiles = recent.filter { availableRoots.contains($0.key) }
+        persist()
+    }
+
+    func renameFiles(_ renames: [String: String], in root: URL) {
+        guard !renames.isEmpty else { return }
+        let key = root.standardizedFileURL.path
+        guard let previous = stored.recentFiles?[key] else { return }
+        var seen = Set<String>()
+        let next = previous.map { renames[$0] ?? $0 }.filter { seen.insert($0).inserted }
+        if previous != next { stored.recentFiles?[key] = next; persist() }
     }
 
     func isAvailable(_ root: URL) -> Bool {

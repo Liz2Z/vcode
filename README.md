@@ -19,6 +19,8 @@ Files / Changes 位于侧栏顶部，点击文件分别进入源码或 diff。�
 ## 当前功能
 
 - **Files**：项目文件树、路径过滤、标签页、完整源码预览。文件树的文件、目录和打开的文件标签均不显示文件／文件夹图标或占位，目录保留展开箭头。
+- **Quick Open**：`⌘P` 按文件名／相对路径模糊查找，空输入优先显示最近打开的文件；↑↓ 选择、Return 打开、Escape 关闭，最近文件按项目写入 XDG 状态。
+- **项目全文搜索**：`⌘⇧F` 或侧栏 Files / Changes 旁的 Search 打开搜索；大小写、整词、正则和目录排除直接可用。结果按文件分组、显示命中片段，点击定位源码行列；Markdown 命中打开源码。使用随应用打包的 ripgrep，沿用项目文件清单，跳过二进制／符号链接及超过 4 MiB 的文件；最多显示 2,000 个命中行并明确提示上限。
 - **Changes**：已暂存／未暂存各有一棵目录树；已暂存比较 HEAD 与暂存区，未暂存比较暂存区与磁盘。
 - diff 显示完整文件上下文、对齐行号、同步纵向滚动、行级和字符级差异，支持跳转上一处 / 下一处改动。
 - 同一文件可同时出现在两组中，并各自打开带 Staged / Unstaged 标记的独立标签；显示新增、删除、重命名和未跟踪文件。两个方向的修改即使互相抵消，也保留在各自分组。
@@ -56,6 +58,8 @@ open dist/VCode.app --args /path/to/repository
 | 操作 | 快捷键 |
 | --- | --- |
 | 打开文件夹 | `⌘O` |
+| 快速打开文件 | `⌘P` |
+| 项目全文搜索 | `⌘⇧F` |
 | 全部文件 / 改动文件 | `⌘1` / `⌘2` |
 | 刷新 | `⌘R` |
 | 关闭当前标签 | `⌘W` |
@@ -77,7 +81,7 @@ swift test
 bash scripts/build.sh
 ```
 
-打包脚本生成 `dist/VCode.app`，包含 Node 和 TypeScript 语言服务，可直接从 Finder 打开。Node 仅用于语言服务，界面与文本绘制使用 AppKit。语言服务首次打开 TS 文件时启动，每个工作区使用一个 TS server，关闭最后一个标签、关闭应用或切换项目后停止。
+打包脚本生成 `dist/VCode.app`，包含 Node、TypeScript 语言服务和 ripgrep，可直接从 Finder 打开。构建脚本从 ripgrep 官方发行包获取固定的 15.1.0 版本并核对 SHA-256，附带许可证；不依赖目标机器的 Homebrew 动态库。Node 仅用于语言服务，界面与文本绘制使用 AppKit。语言服务首次打开 TS 文件时启动，每个工作区使用一个 TS server，关闭最后一个标签、关闭应用或切换项目后停止。
 
 测试包含真实 Git 仓库、增删行对齐、UTF-16 位置映射、原生文本排版，以及真实 TS LSP 的类型信息、定义和文档更新，以及真实分支／worktree 切换、5 万文件的延迟建树、目录整行点击、暂存／未暂存版本隔离和独立标签。
 
@@ -91,7 +95,7 @@ UI 需求与预期见 [tests/ui/README.md](tests/ui/README.md)。每次推送前
 
 `main` 构建成功后，自动在仓库的 [Releases](https://github.com/Liz2Z/vcode/releases) 创建 **Pre-release**，附带 ZIP、DMG 和 `SHA256SUMS.txt`。每次使用独立标签 `preview-<运行编号>-<重跑次数>`，指向本次构建的完整提交 SHA，保留已有预览版；重跑也不会覆盖旧包。手动运行 main 的工作流同样发布预览版。
 
-其他分支或标签只生成 Actions 产物：进入对应运行记录的 **Artifacts**，下载 `VCode-macos-arm64-<提交 SHA>`。DMG 打开后将 VCode 拖到 Applications，ZIP 解压后同样得到 `VCode.app`。应用内已包含 arm64 Node 和 TypeScript 语言服务，目标电脑无需另装 Node。
+其他分支或标签只生成 Actions 产物：进入对应运行记录的 **Artifacts**，下载 `VCode-macos-arm64-<提交 SHA>`。DMG 打开后将 VCode 拖到 Applications，ZIP 解压后同样得到 `VCode.app`。应用内已包含 arm64 Node、TypeScript 语言服务和 ripgrep，目标电脑无需另装运行时。
 
 工作流采用 macOS 26 arm64 runner，依赖按 lockfile 安装；测试、打包或产物校验失败不会发布 Release，失败日志单独保留。Actions 安装包保留 14 天，测试日志保留 7 天；Release 附件不受这两个保留期限制。仅发布任务获得仓库写权限，使用 GitHub 自动提供的工作流 token，不需要个人 token。CI 自动化不代替推送前的真实窗口 UI 验收。
 

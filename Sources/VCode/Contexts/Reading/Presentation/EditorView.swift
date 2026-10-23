@@ -119,7 +119,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     @objc private func splitEditor() { onSplitEditor?() }
     @objc private func closeGroup() { onCloseGroup?() }
 
-    func prepare(path: String, diff: Bool, isGit: Bool, comparison: GitComparison = .workingTree, restoring location: ReadingLocation? = nil, recordNavigation: Bool = true) {
+    func prepare(path: String, diff: Bool, isGit: Bool, comparison: GitComparison = .workingTree, restoring location: ReadingLocation? = nil, recordNavigation: Bool = true, forceSource: Bool = false) {
         if recordNavigation { saveReadingPosition() }
         right.text.cancelNavigationFlash()
         right.text.resetSymbolFeedback()
@@ -130,6 +130,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         if let pendingRestore, MarkdownRenderer.supports(path) {
             if pendingRestore.preview { markdownSourcePaths.remove(path) } else { markdownSourcePaths.insert(path) }
         }
+        if forceSource { markdownSourcePaths.insert(path) }
         showingDiff = diff && isGit
         tabs.show(session)
         breadcrumbs.path.stringValue = path.replacingOccurrences(of: "/", with: "  ›  ")

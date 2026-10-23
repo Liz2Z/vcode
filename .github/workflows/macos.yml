@@ -53,6 +53,7 @@ jobs:
 
       - name: Run automated tests
         run: |
+          bash scripts/prepare-ripgrep.sh
           mkdir -p .build/ci-results
           set -o pipefail
           /usr/bin/swift test 2>&1 | tee .build/ci-results/swift-test.log
@@ -117,7 +118,7 @@ jobs:
           Build: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
 
           Download the DMG and drag VCode into Applications, or extract the ZIP.
-          The app includes arm64 Node.js and the TypeScript language service.
+          The app includes arm64 Node.js, the TypeScript language service, and ripgrep.
           This preview uses ad-hoc signing and is not notarized by Apple.
           EOF
           gh release create "$RELEASE_TAG" \

@@ -17,6 +17,9 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     private let history: WorkspaceHistoryStore
     private var historyPicker: WorkspaceHistoryPicker?
     private var historyMonitor: Any?
+    let projectSearch = ProjectSearchController()
+    private(set) var quickOpen: QuickOpenPicker?
+    private var quickOpenMonitor: Any?
 
     init(history: WorkspaceHistoryStore = WorkspaceHistoryStore(), inspection: InspectionPresenter = InspectionPresenter()) {
         self.history = history
@@ -27,12 +30,19 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     override func loadView() {
         view = workspace
+        addChild(projectSearch)
+        workspace.searchHost.add(projectSearch.view)
+        NSLayoutConstraint.activate([
+            projectSearch.view.leadingAnchor.constraint(equalTo: workspace.searchHost.leadingAnchor), projectSearch.view.trailingAnchor.constraint(equalTo: workspace.searchHost.trailingAnchor),
+            projectSearch.view.topAnchor.constraint(equalTo: workspace.searchHost.topAnchor), projectSearch.view.bottomAnchor.constraint(equalTo: workspace.searchHost.bottomAnchor)
+        ])
         configureActions()
         observer = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.refresh() }
     }
     deinit {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         if let historyMonitor { NSEvent.removeMonitor(historyMonitor) }
+        if let quickOpenMonitor { NSEvent.removeMonitor(quickOpenMonitor) }
         language.stop()
     }
 
@@ -45,6 +55,16 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         workspace.header.branchButton.target = self; workspace.header.branchButton.action = #selector(showBranches)
         workspace.header.worktreeButton.target = self; workspace.header.worktreeButton.action = #selector(showWorktrees)
         workspace.header.historyButton.target = self; workspace.header.historyButton.action = #selector(showHistory)
+        workspace.navigation.search.target = self; workspace.navigation.search.action = #selector(showProjectSearch)
+        projectSearch.onDismiss = { [weak self] in self?.showFiles() }
+        projectSearch.onChoose = { [weak self] root, match in
+            guard let self, self.session.state?.root == root, !self.session.isSwitching,
+                  self.session.state?.files.contains(match.path) == true else { return }
+            let editor = self.workspace.editor
+            self.workspace.editorGroups.activate(editor, focus: true)
+            self.openFile(match.path, diff: false, line: match.line, character: match.character, editor: editor, forceSource: true)
+            self.workspace.explorer.select(match.path)
+        }
         workspace.navigation.files.target = self; workspace.navigation.files.action = #selector(showFiles)
         workspace.navigation.changes.target = self; workspace.navigation.changes.action = #selector(showChanges)
         workspace.explorer.onSelect = { [weak self] path, comparison in self?.openFile(path, diff: comparison != nil, comparison: comparison ?? .workingTree) }
@@ -125,6 +145,9 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             inspection.dismiss(); language.stop()
         }
         let renames = previous.map { state.renames(from: $0) } ?? [:]
+        history.renameFiles(renames, in: state.root)
+        projectSearch.setWorkspace(root: state.root, paths: state.files)
+        quickOpen?.update(paths: state.files, recent: history.recentFiles(in: state.root))
         let renamedActive = workspace.editor.activePath.map { renames[$0] != nil } ?? false
         for editor in workspace.editorGroups.editors {
             editor.allowsNavigation = true
@@ -213,6 +236,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     @objc func openFolder() {
         dismissCodeHover()
+        dismissQuickOpen()
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -226,6 +250,9 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     func open(_ folder: URL) {
         guard !session.isSwitching else { return }
+        dismissQuickOpen()
+        projectSearch.setActive(false); workspace.showSearch(false)
+        workspace.navigation.search.isEnabled = false
         dismissHistory()
         picker?.close()
         pickerRequest = UUID()
@@ -240,17 +267,21 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     @objc func showFiles() { changeSidebar(false) }
     @objc func showChanges() { changeSidebar(true) }
     private func changeSidebar(_ changes: Bool) {
+        let leavingSearch = !workspace.searchHost.isHidden
+        projectSearch.setActive(false); workspace.showSearch(false)
         changesOnly = changes
         workspace.navigation.select(changes: changes)
         if let state = session.state { workspace.explorer.show(state, changesOnly: changes) }
+        if leavingSearch { workspace.editorGroups.activate(workspace.editor, focus: true) }
     }
 
-    func openFile(_ path: String, diff: Bool, comparison: GitComparison = .workingTree, line: Int? = nil, character: Int = 0, highlightDestination: Bool = false, editor: EditorView? = nil, restoring location: ReadingLocation? = nil) {
+    func openFile(_ path: String, diff: Bool, comparison: GitComparison = .workingTree, line: Int? = nil, character: Int = 0, highlightDestination: Bool = false, editor: EditorView? = nil, restoring location: ReadingLocation? = nil, forceSource: Bool = false) {
         guard let state = session.state, !session.isSwitching else { return }
         let editor = editor ?? workspace.editor
         inspectToken = UUID()
         inspection.dismiss()
-        editor.prepare(path: path, diff: diff, isGit: state.isGit, comparison: comparison, restoring: location, recordNavigation: location == nil)
+        if state.files.contains(path) { history.recordFile(path, in: state.root) }
+        editor.prepare(path: path, diff: diff, isGit: state.isGit, comparison: comparison, restoring: location, recordNavigation: location == nil, forceSource: forceSource)
         refreshLanguageStatus()
         loadFile(path, diff: editor.showingDiff, comparison: comparison, position: line.map { ($0, character) }, highlightDestination: highlightDestination, editor: editor)
     }
@@ -277,7 +308,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     private func inspect(index: Int, kind: String, editor: EditorView) {
         guard let kind = InspectionKind(rawValue: kind), let root = session.reader?.root, let path = editor.activePath, language.supports(path), let position = editor.right.position(at: index) else { return }
         if kind == .hover {
-            guard historyPicker == nil, picker?.isShown != true, view.window?.attachedSheet == nil else { return }
+            guard historyPicker == nil, quickOpen == nil, picker?.isShown != true, view.window?.attachedSheet == nil else { return }
         }
         if kind == .hover { hoverRequest = UUID() } else { inspectToken = UUID() }
         inspectionEditor = editor
@@ -322,7 +353,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     }
 
     private func querySymbol(index: Int, kind: InspectionKind, editor: EditorView, completion: @escaping (LanguageInspection?) -> Void) {
-        guard historyPicker == nil, picker?.isShown != true, view.window?.attachedSheet == nil,
+        guard historyPicker == nil, quickOpen == nil, picker?.isShown != true, view.window?.attachedSheet == nil,
               !session.isSwitching, let root = session.reader?.root, let path = editor.activePath,
               language.supports(path), let position = editor.right.position(at: index) else { completion(nil); return }
         let source = editor.right.text.string
@@ -364,6 +395,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     @objc func goBack() { workspace.editor.goBack() }
     @objc func goForward() { workspace.editor.goForward() }
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(showQuickOpen) || item.action == #selector(showProjectSearch) { return session.state != nil && !session.isSwitching }
         if item.action == #selector(goBack) { return !session.isSwitching && workspace.editor.canGoBack }
         if item.action == #selector(goForward) { return !session.isSwitching && workspace.editor.canGoForward }
         return true
@@ -373,8 +405,59 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     @objc func showBranches() { showPicker(.branches, anchor: workspace.header.branchButton) }
     @objc func showWorktrees() { showPicker(.worktrees, anchor: workspace.header.worktreeButton) }
 
+    @objc func showProjectSearch() {
+        guard session.state != nil, !session.isSwitching else { return }
+        dismissCodeHover(); dismissQuickOpen(); dismissHistory(); picker?.close(); pickerRequest = UUID()
+        workspace.showSearch(true); projectSearch.setActive(true)
+        projectSearch.query.selectText(nil)
+    }
+
+    @objc func showQuickOpen() {
+        guard let state = session.state, !session.isSwitching else { return }
+        dismissCodeHover(); dismissHistory(); picker?.close(); pickerRequest = UUID()
+        if let quickOpen { view.window?.makeFirstResponder(quickOpen.filter); quickOpen.filter.selectText(nil); return }
+        let controller = QuickOpenPicker(paths: state.files, recent: history.recentFiles(in: state.root))
+        let editor = workspace.editor
+        addChild(controller); workspace.add(controller.view)
+        let width = controller.view.widthAnchor.constraint(equalToConstant: 760); width.priority = .defaultHigh
+        let height = controller.view.heightAnchor.constraint(equalToConstant: 460); height.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            controller.view.centerXAnchor.constraint(equalTo: workspace.centerXAnchor), controller.view.topAnchor.constraint(equalTo: workspace.header.bottomAnchor, constant: 8),
+            controller.view.leadingAnchor.constraint(greaterThanOrEqualTo: workspace.leadingAnchor, constant: 16), controller.view.trailingAnchor.constraint(lessThanOrEqualTo: workspace.trailingAnchor, constant: -16),
+            controller.view.heightAnchor.constraint(lessThanOrEqualTo: workspace.heightAnchor, constant: -104), width, height
+        ])
+        controller.onDismiss = { [weak self, weak editor] in
+            self?.dismissQuickOpen()
+            if let self, let editor { self.workspace.editorGroups.activate(editor, focus: true) }
+        }
+        controller.onChoose = { [weak self, weak editor] path in
+            guard let self, let editor, self.session.state?.root == state.root,
+                  self.workspace.editorGroups.editors.contains(where: { $0 === editor }),
+                  self.session.state?.files.contains(path) == true else { return }
+            self.dismissQuickOpen(); self.workspace.editorGroups.activate(editor, focus: true)
+            self.view.window?.makeFirstResponder(editor)
+            self.openFile(path, diff: false, editor: editor)
+            self.workspace.explorer.select(path)
+        }
+        quickOpen = controller
+        workspace.layoutSubtreeIfNeeded(); view.window?.makeFirstResponder(controller.filter)
+        quickOpenMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self, weak controller] event in
+            guard let self, let controller, event.window === self.view.window else { return event }
+            if event.type == .keyDown {
+                if event.keyCode == 53 { controller.onDismiss?(); return nil }
+            } else if !controller.view.bounds.contains(controller.view.convert(event.locationInWindow, from: nil)) { self.dismissQuickOpen() }
+            return event
+        }
+    }
+
+    private func dismissQuickOpen() {
+        if let quickOpenMonitor { NSEvent.removeMonitor(quickOpenMonitor); self.quickOpenMonitor = nil }
+        quickOpen?.view.removeFromSuperview(); quickOpen?.removeFromParent(); quickOpen = nil
+    }
+
     @objc func showHistory() {
         guard !session.isSwitching else { return }
+        dismissQuickOpen()
         dismissCodeHover()
         if historyPicker != nil { dismissHistory(); return }
         picker?.close()
@@ -432,6 +515,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     private func showPicker(_ kind: GitDestinationPicker.Kind, anchor: NSButton) {
         guard session.state?.isGit == true, !session.isSwitching else { return }
         dismissCodeHover()
+        dismissQuickOpen()
         dismissHistory()
         picker?.close()
         let controller = GitDestinationPicker(kind: kind)
@@ -469,18 +553,22 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     func activate(_ destination: GitDestination, completion: @escaping (Result<WorkspaceState, Error>) -> Void) {
         guard !session.isSwitching, session.reader != nil else { return }
+        dismissQuickOpen(); projectSearch.setActive(false)
         inspectToken = UUID()
         session.invalidateDocument()
         inspection.dismiss()
         language.stop()
         workspace.status.language.stringValue = ""
         workspace.header.setBusy(true)
+        workspace.navigation.search.isEnabled = false
         workspace.explorer.outline.isEnabled = false
         workspace.status.message.stringValue = "Switching repository context…"
         workspace.editorGroups.editors.forEach { $0.allowsNavigation = false }
         session.activate(destination) { [weak self] result in
+            if let self, !self.workspace.searchHost.isHidden { self.projectSearch.setActive(true) }
             self?.workspace.editorGroups.editors.forEach { $0.allowsNavigation = true }
             self?.workspace.header.setBusy(false)
+            self?.workspace.navigation.search.isEnabled = self?.session.state != nil
             self?.workspace.explorer.outline.isEnabled = true
             if case .failure(let error) = result { self?.workspace.status.message.stringValue = error.localizedDescription }
             completion(result)
@@ -500,5 +588,5 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         workspace.editor.right.text.cancelInspection()
         inspection.dismissHover()
     }
-    func shutdown() { dismissHistory(); picker?.close(); session.close(); inspection.dismiss(); language.stop() }
+    func shutdown() { dismissQuickOpen(); projectSearch.cancel(); dismissHistory(); picker?.close(); session.close(); inspection.dismiss(); language.stop() }
 }

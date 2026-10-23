@@ -14,12 +14,12 @@ final class ButtonLayoutTests: XCTestCase {
             window.setContentSize(NSSize(width: width, height: 40))
             navigation.select(changes: width == 208)
             navigation.layoutSubtreeIfNeeded()
-            for button in [navigation.files, navigation.changes] {
+            for button in [navigation.files, navigation.changes, navigation.search] {
                 let stack = try XCTUnwrap(button.subviews.compactMap { $0 as? NSStackView }.first)
                 let label = try XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? NSTextField }.first)
                 let image = try XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? NSImageView }.first)
                 XCTAssertGreaterThanOrEqual(label.frame.width, label.intrinsicContentSize.width - 0.5, "Fixed navigation titles must not truncate at width \(width)")
-                XCTAssertEqual(image.frame.width, 14, accuracy: 0.5)
+                XCTAssertTrue(image.isHidden)
                 XCTAssertGreaterThanOrEqual(stack.frame.minX, 7.5)
                 XCTAssertLessThanOrEqual(stack.frame.maxX, button.bounds.width - 7.5)
             }

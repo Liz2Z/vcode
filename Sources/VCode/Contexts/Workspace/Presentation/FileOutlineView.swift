@@ -1,11 +1,18 @@
 import AppKit
 
 final class FileOutlineView: NSOutlineView {
+    override var isEnabled: Bool {
+        didSet {
+            window?.invalidateCursorRects(for: self)
+            refreshPointerAtCurrentLocation()
+        }
+    }
     private(set) var isHandlingMouse = false
     private var pressedNode: FileNode?
     private var pressedRow = -1
     private var hoveredRow = -1
     private var pointerTracking: NSTrackingArea?
+    private var cursorTracking: NSTrackingArea?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -15,9 +22,47 @@ final class FileOutlineView: NSOutlineView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let pointerTracking { removeTrackingArea(pointerTracking) }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect, .enabledDuringMouseDrag], owner: self)
+        if let cursorTracking { removeTrackingArea(cursorTracking) }
+        // Hover must work before the first activating click. AppKit does not
+        // support cursorUpdate with activeAlways, so keep separate areas.
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect, .enabledDuringMouseDrag], owner: self)
         addTrackingArea(area)
         pointerTracking = area
+        let cursorArea = NSTrackingArea(rect: .zero, options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(cursorArea)
+        cursorTracking = cursorArea
+        window?.invalidateCursorRects(for: self)
+        refreshPointerAtCurrentLocation()
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard isEnabled, !isHiddenOrHasHiddenAncestor else { return }
+        let range = rows(in: visibleRect)
+        guard range.location != NSNotFound else { return }
+        for row in range.location..<NSMaxRange(range) where item(atRow: row) is FileNode {
+            let rect = rect(ofRow: row).intersection(visibleRect)
+            if !rect.isEmpty { addCursorRect(rect, cursor: .pointingHand) }
+        }
+    }
+
+    private func refreshPointerAtCurrentLocation() {
+        guard let window, window.isKeyWindow else { return }
+        updatePointerCursor(at: convert(window.mouseLocationOutsideOfEventStream, from: nil))
+    }
+
+    private func updatePointerCursor(at point: NSPoint) {
+        // The outline owns hover dispatch, including disclosure controls and
+        // section rows. Do not wait for a row view to be activated by a click.
+        guard !isHiddenOrHasHiddenAncestor, visibleRect.contains(point) else { return }
+        let row = row(at: point)
+        let clickable = isEnabled && row >= 0 && item(atRow: row) is FileNode
+        (clickable ? NSCursor.pointingHand : NSCursor.arrow).set()
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        super.cursorUpdate(with: event)
+        updatePointerCursor(at: convert(event.locationInWindow, from: nil))
     }
 
     private func updateHover(_ event: NSEvent) {
@@ -29,8 +74,15 @@ final class FileOutlineView: NSOutlineView {
         if next >= 0 { (rowView(atRow: next, makeIfNecessary: true) as? SelectionRowView)?.isHovered = true }
     }
 
-    override func mouseMoved(with event: NSEvent) { super.mouseMoved(with: event); updateHover(event) }
-    override func mouseEntered(with event: NSEvent) { updateHover(event) }
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        updateHover(event)
+        updatePointerCursor(at: convert(event.locationInWindow, from: nil))
+    }
+    override func mouseEntered(with event: NSEvent) {
+        updateHover(event)
+        updatePointerCursor(at: convert(event.locationInWindow, from: nil))
+    }
     override func mouseExited(with event: NSEvent) {
         if hoveredRow >= 0 { (rowView(atRow: hoveredRow, makeIfNecessary: false) as? SelectionRowView)?.isHovered = false }
         hoveredRow = -1
@@ -81,6 +133,7 @@ final class FileOutlineView: NSOutlineView {
         if hoveredRow >= 0 { (rowView(atRow: hoveredRow, makeIfNecessary: false) as? SelectionRowView)?.isHovered = false }
         hoveredRow = -1
         super.reloadData()
+        window?.invalidateCursorRects(for: self)
     }
 
     private func cancelPress() {
