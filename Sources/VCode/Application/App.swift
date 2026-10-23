@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ notification: Notification) { windowSave?.cancel(); saveWindow(); workspace?.shutdown() }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { workspace?.saveReadingSession(); return true }
     func windowDidMove(_ notification: Notification) { scheduleWindowSave() }
     func windowDidResize(_ notification: Notification) { scheduleWindowSave() }
     private func scheduleWindowSave() {

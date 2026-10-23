@@ -1,6 +1,6 @@
 import Foundation
 
-struct ReadingDocument: Hashable {
+struct ReadingDocument: Codable, Hashable {
     let path: String
     let comparison: GitComparison?
     var id: String { (comparison?.rawValue ?? "source") + "\0" + path }
@@ -69,6 +69,12 @@ struct ReaderSession {
                 ?? previous.prefix(index).last { !ids.contains($0.id) }
         }
         return oldActive != activeDocument
+    }
+
+    mutating func restore(documents: [ReadingDocument], active: ReadingDocument?) {
+        var seen = Set<ReadingDocument>()
+        self.documents = documents.filter { seen.insert($0).inserted }
+        activeDocument = active.flatMap { self.documents.contains($0) ? $0 : nil } ?? self.documents.first
     }
 
     mutating func reset() { documents = []; activeDocument = nil }

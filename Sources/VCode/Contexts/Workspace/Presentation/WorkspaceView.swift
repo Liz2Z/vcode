@@ -48,6 +48,15 @@ final class WorkspaceView: NSView, NSSplitViewDelegate {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    var sidebarWidth: Double { Double(split.arrangedSubviews[0].frame.width) }
+
+    func restoreSidebarWidth(_ width: Double) {
+        guard width.isFinite else { return }
+        layoutSubtreeIfNeeded()
+        let maximum = splitView(split, constrainMaxCoordinate: split.bounds.width, ofSubviewAt: 0)
+        split.setPosition(min(maximum, max(WorkspaceSplitView.minimumSidebarWidth, width)), ofDividerAt: 0)
+    }
+
     func showSearch(_ visible: Bool) {
         searchHost.isHidden = !visible; explorer.isHidden = visible
         if visible { navigation.select(changes: nil) }

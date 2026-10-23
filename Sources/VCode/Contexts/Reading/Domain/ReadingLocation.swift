@@ -1,7 +1,7 @@
 import Foundation
 
 /// Content around an anchor lets a refresh follow insertions above the reader.
-struct ReadingTextAnchor: Equatable {
+struct ReadingTextAnchor: Codable, Equatable {
     var line: Int
     var character: Int
     var text: String
@@ -36,7 +36,7 @@ struct ReadingTextAnchor: Equatable {
     }
 }
 
-struct PaneReadingPosition: Equatable {
+struct PaneReadingPosition: Codable, Equatable {
     var start: ReadingTextAnchor
     var end: ReadingTextAnchor
     var top: ReadingTextAnchor
@@ -44,7 +44,7 @@ struct PaneReadingPosition: Equatable {
     var horizontalOffset: Double
 }
 
-struct MarkdownReadingPosition: Equatable {
+struct MarkdownReadingPosition: Codable, Equatable {
     var selection: NSRange
     var x: Double
     var y: Double
@@ -52,7 +52,7 @@ struct MarkdownReadingPosition: Equatable {
     var verticalOffset: Double = 0
 }
 
-struct ReadingLocation: Equatable {
+struct ReadingLocation: Codable, Equatable {
     var document: ReadingDocument
     var right: PaneReadingPosition
     var left: PaneReadingPosition

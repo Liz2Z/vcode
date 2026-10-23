@@ -65,7 +65,7 @@ final class EditorGroupsView: NSView, NSSplitViewDelegate {
         if changed { onActiveChanged?(editor) }
     }
 
-    func splitActiveEditor() {
+    func splitActiveEditor(copyDocument: Bool = true) {
         guard workspaceOpen, editors.count == 1 else { return }
         let document = activeEditor.activePath.map { ReadingDocument(path: $0, comparison: activeEditor.activeComparison) }
         let editor = EditorView()
@@ -79,7 +79,24 @@ final class EditorGroupsView: NSView, NSSplitViewDelegate {
         split.adjustSubviews()
         split.setPosition((split.bounds.width - split.dividerThickness) / 2, ofDividerAt: 0)
         activate(editor, focus: true)
-        if let document { onSplitDocument?(document, editor) }
+        if copyDocument, let document { onSplitDocument?(document, editor) }
+    }
+
+    var splitRatio: Double {
+        let total = split.bounds.width - split.dividerThickness
+        return editors.count == 2 && total > 0 ? Double(editors[0].frame.width / total) : 0.5
+    }
+
+    func restoreSession(_ groups: [EditorReadingSession], active: Int, ratio: Double) {
+        if groups.count > 1, editors.count == 1 { splitActiveEditor(copyDocument: false) }
+        for (editor, saved) in zip(editors, groups) { editor.restoreSession(saved) }
+        layoutSubtreeIfNeeded()
+        if editors.count == 2 {
+            let total = max(0, split.bounds.width - split.dividerThickness)
+            let ratio = ratio.isFinite ? min(1, max(0, ratio)) : 0.5
+            split.setPosition(min(max(220, total * ratio), max(220, total - 220)), ofDividerAt: 0)
+        }
+        activate(editors[min(max(active, 0), editors.count - 1)], focus: true)
     }
 
     func close(_ editor: EditorView) {

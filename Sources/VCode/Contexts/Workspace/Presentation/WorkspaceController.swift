@@ -14,6 +14,10 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     private var picker: NSPopover?
     private var pickerRequest = UUID()
     private var displayedState: WorkspaceState?
+    private var readingSave: DispatchWorkItem?
+    private var readingObservers: [NSObjectProtocol] = []
+    private var readingStateReady = false
+    private var treeSessions: [String: FileTreeReadingState] = [:]
     private let history: WorkspaceHistoryStore
     private var historyPicker: WorkspaceHistoryPicker?
     private var historyMonitor: Any?
@@ -47,9 +51,12 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         ])
         configureActions()
         configureShortcutKeys()
+        configureReadingPersistence()
         observer = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.refresh() }
     }
     deinit {
+        readingSave?.cancel()
+        readingObservers.forEach(NotificationCenter.default.removeObserver)
         if let observer { NotificationCenter.default.removeObserver(observer) }
         if let historyMonitor { NSEvent.removeMonitor(historyMonitor) }
         if let quickOpenMonitor { NSEvent.removeMonitor(quickOpenMonitor) }
@@ -87,9 +94,10 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         }
         workspace.editorGroups.editors.forEach(configureEditor)
-        workspace.editorGroups.onEditorAdded = { [weak self] editor in self?.configureEditor(editor) }
+        workspace.editorGroups.onEditorAdded = { [weak self] editor in self?.configureEditor(editor); self?.scheduleReadingSave() }
         workspace.editorGroups.onEditorRemoved = { [weak self] editor in
             guard let self else { return }
+            self.scheduleReadingSave()
             self.session.invalidateDocument(scope: editor.readingID)
             if self.inspectionEditor === editor { self.inspection.dismiss(); self.inspectionEditor = nil }
             if self.workspace.editorGroups.editors.allSatisfy({ $0.activePath == nil }) { self.language.stop() }
@@ -97,6 +105,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         }
         workspace.editorGroups.onActiveChanged = { [weak self] editor in
             guard let self else { return }
+            self.scheduleReadingSave()
             self.inspectToken = UUID(); self.hoverRequest = UUID()
             self.inspection.dismiss()
             self.syncLanguage(for: editor)
@@ -153,7 +162,16 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     private func applyState(_ state: WorkspaceState) {
         let previous = displayedState
-        if previous?.root != state.root { resetReading() }
+        let changedRoot = previous?.root != state.root
+        let saved = changedRoot ? history.readingSession(in: state.root) : nil
+        if changedRoot {
+            readingStateReady = false
+            resetReading()
+            treeSessions = saved?.trees ?? [:]
+            changesOnly = saved?.changesOnly ?? changesOnly
+            workspace.explorer.filter.stringValue = ""
+            projectSearch.setActive(false); workspace.showSearch(false)
+        }
         else if previous?.branch != state.branch {
             inspectToken = UUID(); hoverRequest = UUID()
             inspection.dismiss(); language.stop()
@@ -169,15 +187,29 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         }
         displayedState = state
         workspace.show(state, changesOnly: changesOnly)
+        if changedRoot {
+            if let saved {
+                workspace.restoreSidebarWidth(saved.sidebarWidth)
+                workspace.editorGroups.restoreSession(Array(saved.groups.prefix(2)), active: saved.activeGroup, ratio: saved.splitRatio)
+            }
+            if let tree = treeSessions[changesOnly ? "changes" : "files"] { workspace.explorer.restoreSession(tree) }
+        }
+        readingStateReady = true
         for editor in workspace.editorGroups.editors {
             if let path = editor.activePath {
-                loadFile(path, diff: editor.showingDiff, comparison: editor.activeComparison ?? .workingTree, preserveScroll: true, editor: editor)
+                if changedRoot {
+                    openFile(path, diff: editor.activeComparison != nil, comparison: editor.activeComparison ?? .workingTree, editor: editor)
+                } else {
+                    loadFile(path, diff: editor.showingDiff, comparison: editor.activeComparison ?? .workingTree, preserveScroll: true, editor: editor)
+                }
             }
         }
         if renamedActive, let path = workspace.editor.activePath { workspace.explorer.select(path, comparison: workspace.editor.activeComparison) }
+        scheduleReadingSave()
     }
 
     private func configureEditor(_ editor: EditorView) {
+        editor.onSessionChanged = { [weak self] in self?.scheduleReadingSave() }
         editor.allowsNavigation = session.state != nil && !session.isSwitching
         editor.onRestoreLocation = { [weak self, weak editor] location in
             guard let self, let editor else { return }
@@ -194,6 +226,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         }
         editor.onLastTabClosed = { [weak self, weak editor] in
             guard let self, let editor else { return }
+            self.scheduleReadingSave()
             self.session.invalidateDocument(scope: editor.readingID)
             if self.inspectionEditor === editor { self.inspection.dismiss() }
             if self.workspace.editorGroups.editors.count == 2 { self.workspace.editorGroups.close(editor) }
@@ -265,6 +298,8 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     func open(_ folder: URL) {
         guard !session.isSwitching else { return }
+        saveReadingSession()
+        readingStateReady = false
         dismissShortcuts()
         dismissQuickOpen()
         projectSearch.setActive(false); workspace.showSearch(false)
@@ -286,9 +321,17 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         dismissShortcuts()
         let leavingSearch = !workspace.searchHost.isHidden
         projectSearch.setActive(false); workspace.showSearch(false)
+        let changedMode = changesOnly != changes
+        if changedMode { treeSessions[changesOnly ? "changes" : "files"] = workspace.explorer.captureSession() }
         changesOnly = changes
         workspace.navigation.select(changes: changes)
-        if let state = session.state { workspace.explorer.show(state, changesOnly: changes) }
+        if let state = session.state {
+            workspace.explorer.show(state, changesOnly: changes)
+            if changedMode {
+                workspace.explorer.restoreSession(treeSessions[changes ? "changes" : "files"] ?? FileTreeReadingState(expanded: [], collapsed: [], selection: nil, query: "", scrollOffset: 0))
+            }
+        }
+        scheduleReadingSave()
         if leavingSearch { workspace.editorGroups.activate(workspace.editor, focus: true) }
     }
 
@@ -575,6 +618,8 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     func activate(_ destination: GitDestination, completion: @escaping (Result<WorkspaceState, Error>) -> Void) {
         guard !session.isSwitching, session.reader != nil else { return }
+        saveReadingSession()
+        readingStateReady = false
         dismissShortcuts()
         dismissQuickOpen(); projectSearch.setActive(false)
         inspectToken = UUID()
@@ -589,6 +634,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         workspace.editorGroups.editors.forEach { $0.allowsNavigation = false }
         session.activate(destination) { [weak self] result in
             if let self, !self.workspace.searchHost.isHidden { self.projectSearch.setActive(true) }
+            self?.readingStateReady = self?.displayedState != nil
             self?.workspace.editorGroups.editors.forEach { $0.allowsNavigation = true }
             self?.workspace.header.setBusy(false)
             self?.workspace.navigation.search.isEnabled = self?.session.state != nil
@@ -612,10 +658,44 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         inspection.dismissHover()
     }
     func shutdown() {
+        saveReadingSession()
+        readingStateReady = false
         dismissShortcuts(); cancelShortcutChord()
         if let shortcutKeyMonitor { NSEvent.removeMonitor(shortcutKeyMonitor); self.shortcutKeyMonitor = nil }
         if let shortcutFocusObserver { NotificationCenter.default.removeObserver(shortcutFocusObserver); self.shortcutFocusObserver = nil }
         dismissQuickOpen(); projectSearch.cancel(); dismissHistory(); picker?.close(); session.close(); inspection.dismiss(); language.stop()
+    }
+
+    private func configureReadingPersistence() {
+        let names: [Notification.Name] = [NSTextView.didChangeSelectionNotification, NSView.boundsDidChangeNotification,
+            NSOutlineView.itemDidExpandNotification, NSOutlineView.itemDidCollapseNotification,
+            NSOutlineView.selectionDidChangeNotification, NSSplitView.didResizeSubviewsNotification,
+            NSControl.textDidChangeNotification]
+        for name in names {
+            readingObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                guard let self, let view = note.object as? NSView, view.isDescendant(of: self.workspace) else { return }
+                self.scheduleReadingSave()
+            })
+        }
+    }
+
+    private func scheduleReadingSave() {
+        guard readingStateReady else { return }
+        readingSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.saveReadingSession() }
+        readingSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    func saveReadingSession() {
+        readingSave?.cancel(); readingSave = nil
+        guard readingStateReady, let state = displayedState else { return }
+        treeSessions[changesOnly ? "changes" : "files"] = workspace.explorer.captureSession()
+        let groups = workspace.editorGroups
+        let saved = WorkspaceReadingSession(groups: groups.editors.map { $0.captureSession() },
+            activeGroup: groups.editors.firstIndex(where: { $0 === groups.activeEditor }) ?? 0,
+            splitRatio: groups.splitRatio, sidebarWidth: workspace.sidebarWidth, changesOnly: changesOnly, trees: treeSessions)
+        history.saveReadingSession(saved, in: state.root)
     }
 
     private func configureShortcutKeys() {

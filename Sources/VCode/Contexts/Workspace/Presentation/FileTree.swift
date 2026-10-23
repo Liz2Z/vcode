@@ -145,6 +145,27 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         rebuild(reset: switching)
     }
 
+    func captureSession() -> FileTreeReadingState {
+        let folders = nodes.values.filter { $0.directory }
+        return FileTreeReadingState(
+            expanded: (appliedQuery.isEmpty ? folders.filter { outline.isItemExpanded($0) }.map(\.identity) : Array(expandedBeforeSearch)).sorted(),
+            collapsed: (appliedQuery.isEmpty ? folders.filter { !outline.isItemExpanded($0) }.map(\.identity) : Array(collapsedBeforeSearch)).sorted(),
+            selection: (outline.item(atRow: outline.selectedRow) as? FileNode)?.identity,
+            query: filter.stringValue, scrollOffset: Double(outline.enclosingScrollView?.contentView.bounds.minY ?? 0))
+    }
+
+    func restoreSession(_ saved: FileTreeReadingState) {
+        filterWork?.cancel()
+        filter.stringValue = saved.query
+        rebuild(reset: true, restoring: saved)
+        if let scroll = outline.enclosingScrollView, saved.scrollOffset.isFinite {
+            outline.layoutSubtreeIfNeeded()
+            let y = min(max(0, saved.scrollOffset), max(0, outline.bounds.height - scroll.contentView.bounds.height))
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+    }
+
     @objc private func filterChanged() {
         filterWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.rebuild(reset: false) }
@@ -157,14 +178,17 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         (comparison?.rawValue ?? "files") + "\0" + path
     }
 
-    private func rebuild(reset: Bool) {
+    private func rebuild(reset: Bool, restoring saved: FileTreeReadingState? = nil) {
         guard let state else { return }
         let visibleFolders = nodes.values.filter { $0.directory && outline.row(forItem: $0) >= 0 }
         var expanded = reset ? Set<String>() : Set(visibleFolders.filter { outline.isItemExpanded($0) }.map(\.identity))
         var collapsed = reset ? Set<String>() : Set(visibleFolders.filter { !outline.isItemExpanded($0) }.map(\.identity))
-        let selection = reset ? nil : (outline.item(atRow: outline.selectedRow) as? FileNode)?.identity
+        let selection = saved?.selection ?? (reset ? nil : (outline.item(atRow: outline.selectedRow) as? FileNode)?.identity)
         let query = filter.stringValue
-        if reset { expandedBeforeSearch = []; collapsedBeforeSearch = [] }
+        if let saved {
+            expanded = Set(saved.expanded); collapsed = Set(saved.collapsed)
+            expandedBeforeSearch = expanded; collapsedBeforeSearch = collapsed
+        } else if reset { expandedBeforeSearch = []; collapsedBeforeSearch = [] }
         else if appliedQuery.isEmpty && !query.isEmpty { expandedBeforeSearch = expanded; collapsedBeforeSearch = collapsed }
         else if !appliedQuery.isEmpty && query.isEmpty { expanded = expandedBeforeSearch; collapsed = collapsedBeforeSearch }
         appliedQuery = query

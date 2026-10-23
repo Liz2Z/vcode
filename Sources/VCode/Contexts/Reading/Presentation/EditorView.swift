@@ -43,6 +43,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     var onLastTabClosed: (() -> Void)?
     var onOpenFolder: (() -> Void)?
     var onCursor: (((line: Int, character: Int)) -> Void)?
+    var onSessionChanged: (() -> Void)?
     var onRestoreLocation: ((ReadingLocation) -> Void)?
 
     override init(frame frameRect: NSRect) {
@@ -92,6 +93,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         tabs.onMove = { [weak self] document, index in
             guard let self, self.session.move(document, to: index) else { return }
             self.tabs.show(self.session, revealActive: false)
+            self.onSessionChanged?()
         }
         welcome.openButton.target = self; welcome.openButton.action = #selector(openFolder)
         breadcrumbs.sourceButton.target = self; breadcrumbs.sourceButton.action = #selector(showMarkdownSource)
@@ -139,6 +141,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         breadcrumbs.isHidden = false
         welcome.isHidden = true
         if snapshot?.path != path || snapshot?.comparison != activeComparison { showMessage("Loading…") }
+        onSessionChanged?()
     }
 
     func show(_ next: FileSnapshot, diff: Bool, preserveScroll: Bool, position: (Int, Int)? = nil, highlightDestination: Bool = false) {
@@ -246,6 +249,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         finishClosing(session.close(document))
     }
     private func finishClosing(_ wasActive: Bool) {
+        onSessionChanged?()
         tabs.show(session)
         guard wasActive else { return }
         snapshot = nil
@@ -279,6 +283,25 @@ final class EditorView: NSView, NSSplitViewDelegate {
         }
         pendingArrival = false; pendingRestore = nil
         updateNavigationButtons()
+        onSessionChanged?()
+    }
+
+    func captureSession() -> EditorReadingSession {
+        var positions = savedPositions
+        // An app exit can arrive before the active document's asynchronous render.
+        // Keep its saved anchor instead of capturing the temporary loading view.
+        if let location = (pendingArrival ? pendingRestore : nil) ?? readingLocation() { positions[location.document] = location }
+        return EditorReadingSession(documents: session.documents, activeDocument: session.activeDocument,
+            positions: session.documents.compactMap { positions[$0] }, markdownSourcePaths: markdownSourcePaths.sorted())
+    }
+
+    func restoreSession(_ saved: EditorReadingSession) {
+        reset()
+        let saved = saved.validated
+        session.restore(documents: saved.documents, active: saved.activeDocument)
+        for location in saved.positions { savedPositions[location.document] = location }
+        markdownSourcePaths = Set(saved.markdownSourcePaths)
+        tabs.show(session)
     }
 
     private func updateNavigationButtons() {
@@ -339,6 +362,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         markdown.isHidden = !preview
         split.isHidden = preview
         breadcrumbs.showMarkdownControls(true, preview: preview)
+        onSessionChanged?()
         if preview { window?.makeFirstResponder(markdown.text) } else { window?.makeFirstResponder(right.text) }
     }
     func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { subview == left }

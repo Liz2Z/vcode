@@ -117,7 +117,7 @@ final class ProjectSearchTests: XCTestCase {
     func testSearchSidebarQuickOpenSplitSelectionMarkdownAndWorkspaceChanges() throws {
         try write("src/alpha.ts", "// first\n🚀 needle\n")
         try write("docs/readme.md", "# Heading\n\nneedle markdown\n")
-        let controller = WorkspaceController(history: WorkspaceHistoryStore(directory: root.appendingPathComponent(".state"), legacyDefaults: nil))
+        let controller = WorkspaceController(history: isolatedHistoryStore())
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 700), styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentViewController = controller
         defer { controller.shutdown(); withExtendedLifetime(window) {} }

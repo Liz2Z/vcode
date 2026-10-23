@@ -14,6 +14,7 @@ final class WorkspaceHistoryStore {
         var lastFolder: URL?
         var window: WindowPlacement?
         var recentFiles: [String: [String]]?
+        var readingSessions: [String: WorkspaceReadingSession]?
     }
     let file: URL
     private var stored = StoredState()
@@ -99,6 +100,20 @@ final class WorkspaceHistoryStore {
         var seen = Set<String>()
         let next = previous.map { renames[$0] ?? $0 }.filter { seen.insert($0).inserted }
         if previous != next { stored.recentFiles?[key] = next; persist() }
+    }
+
+    func readingSession(in root: URL) -> WorkspaceReadingSession? {
+        stored.readingSessions?[root.standardizedFileURL.path]
+    }
+
+    func saveReadingSession(_ session: WorkspaceReadingSession, in root: URL) {
+        let key = root.standardizedFileURL.path
+        guard stored.readingSessions?[key] != session else { return }
+        var sessions = stored.readingSessions ?? [:]
+        sessions[key] = session
+        let roots = Set(stored.entries.map { $0.root.standardizedFileURL.path } + [key])
+        stored.readingSessions = sessions.filter { roots.contains($0.key) }
+        persist()
     }
 
     func isAvailable(_ root: URL) -> Bool {

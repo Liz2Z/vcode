@@ -4,7 +4,7 @@ enum GitChangeKind: String {
     case modified = "M", added = "A", deleted = "D", renamed = "R", untracked = "U", conflict = "!", typeChanged = "T"
 }
 
-enum GitComparison: String, CaseIterable {
+enum GitComparison: String, Codable, CaseIterable {
     case staged, unstaged, workingTree
 }
 
