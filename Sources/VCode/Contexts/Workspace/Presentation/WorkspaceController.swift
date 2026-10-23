@@ -23,8 +23,8 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     private var externalOpenToken = UUID()
     private var externalOpenFailures: [ExternalOpenNotice.Failure] = []
     private let history: WorkspaceHistoryStore
-    private var historyPicker: WorkspaceHistoryPicker?
-    private var historyMonitor: Any?
+    private(set) var historySidebar: WorkspaceHistorySidebar!
+    private var historyWidthSave: DispatchWorkItem?
     let projectSearch = ProjectSearchController()
     private(set) var quickOpen: QuickOpenPicker?
     private var quickOpenMonitor: Any?
@@ -53,6 +53,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             projectSearch.view.leadingAnchor.constraint(equalTo: workspace.searchHost.leadingAnchor), projectSearch.view.trailingAnchor.constraint(equalTo: workspace.searchHost.trailingAnchor),
             projectSearch.view.topAnchor.constraint(equalTo: workspace.searchHost.topAnchor), projectSearch.view.bottomAnchor.constraint(equalTo: workspace.searchHost.bottomAnchor)
         ])
+        configureHistorySidebar()
         configureActions()
         configureShortcutKeys()
         configureReadingPersistence()
@@ -62,7 +63,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         readingSave?.cancel()
         readingObservers.forEach(NotificationCenter.default.removeObserver)
         if let observer { NotificationCenter.default.removeObserver(observer) }
-        if let historyMonitor { NSEvent.removeMonitor(historyMonitor) }
+        historyWidthSave?.cancel()
         if let quickOpenMonitor { NSEvent.removeMonitor(quickOpenMonitor) }
         if let shortcutsMonitor { NSEvent.removeMonitor(shortcutsMonitor) }
         if let shortcutKeyMonitor { NSEvent.removeMonitor(shortcutKeyMonitor) }
@@ -83,7 +84,6 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         workspace.header.openButton.target = self; workspace.header.openButton.action = #selector(openFolder)
         workspace.header.branchButton.target = self; workspace.header.branchButton.action = #selector(showBranches)
         workspace.header.worktreeButton.target = self; workspace.header.worktreeButton.action = #selector(showWorktrees)
-        workspace.header.historyButton.target = self; workspace.header.historyButton.action = #selector(showHistory)
         workspace.navigation.search.target = self; workspace.navigation.search.action = #selector(showProjectSearch)
         projectSearch.onDismiss = { [weak self] in self?.showFiles() }
         projectSearch.onChoose = { [weak self] root, match in
@@ -152,6 +152,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             guard let self else { return }
             self.history.record(state)
             self.applyState(state)
+            self.historySidebar?.setBusy(false)
             if let error = self.history.persistenceError { self.workspace.status.message.stringValue = error }
             self.view.window?.representedURL = state.root
             self.view.window?.title = "\(state.root.lastPathComponent) — VCode"
@@ -161,7 +162,10 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             self.history.update(state)
             self.applyState(state)
         }
-        session.onError = { [weak self] error in self?.workspace.status.message.stringValue = error.localizedDescription }
+        session.onError = { [weak self] error in
+            self?.historySidebar?.setBusy(false)
+            self?.workspace.status.message.stringValue = error.localizedDescription
+        }
         if let error = history.persistenceError {
             workspace.status.message.stringValue = error
             workspace.status.message.toolTip = error
@@ -195,6 +199,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         }
         displayedState = state
         workspace.show(state, changesOnly: changesOnly)
+        updateHistorySidebar()
         if changedRoot {
             if let saved {
                 workspace.restoreSidebarWidth(saved.sidebarWidth)
@@ -313,11 +318,11 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     private func openWorkspace(_ folder: URL, completion: ((Result<WorkspaceState, Error>) -> Void)? = nil) {
         saveReadingSession()
         readingStateReady = false
+        historySidebar?.setBusy(true)
         dismissShortcuts()
         dismissQuickOpen()
         projectSearch.setActive(false); workspace.showSearch(false)
         workspace.navigation.search.isEnabled = false
-        dismissHistory()
         picker?.close()
         pickerRequest = UUID()
         inspection.dismiss()
@@ -447,8 +452,9 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     private func inspect(index: Int, kind: String, editor: EditorView) {
         guard let kind = InspectionKind(rawValue: kind), let root = session.reader?.root, let path = editor.activePath, language.supports(path), let position = editor.right.position(at: index) else { return }
         if kind == .hover {
-            guard historyPicker == nil, quickOpen == nil, picker?.isShown != true, view.window?.attachedSheet == nil else { return }
+            guard quickOpen == nil, picker?.isShown != true, view.window?.attachedSheet == nil else { return }
         }
+        historySidebar?.details.dismiss()
         if kind == .hover { hoverRequest = UUID() } else { inspectToken = UUID() }
         inspectionEditor = editor
         syncLanguage(for: editor)
@@ -492,7 +498,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     }
 
     private func querySymbol(index: Int, kind: InspectionKind, editor: EditorView, completion: @escaping (LanguageInspection?) -> Void) {
-        guard historyPicker == nil, quickOpen == nil, picker?.isShown != true, view.window?.attachedSheet == nil,
+        guard quickOpen == nil, picker?.isShown != true, view.window?.attachedSheet == nil,
               !session.isSwitching, let root = session.reader?.root, let path = editor.activePath,
               language.supports(path), let position = editor.right.position(at: index) else { completion(nil); return }
         let source = editor.right.text.string
@@ -548,7 +554,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     @objc func showProjectSearch() {
         guard session.state != nil, !session.isSwitching else { return }
         dismissShortcuts()
-        dismissCodeHover(); dismissQuickOpen(); dismissHistory(); picker?.close(); pickerRequest = UUID()
+        dismissCodeHover(); dismissQuickOpen(); picker?.close(); pickerRequest = UUID()
         workspace.showSearch(true); projectSearch.setActive(true)
         projectSearch.query.selectText(nil)
     }
@@ -556,7 +562,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     @objc func showQuickOpen() {
         guard let state = session.state, !session.isSwitching else { return }
         dismissShortcuts()
-        dismissCodeHover(); dismissHistory(); picker?.close(); pickerRequest = UUID()
+        dismissCodeHover(); picker?.close(); pickerRequest = UUID()
         if let quickOpen { view.window?.makeFirstResponder(quickOpen.filter); quickOpen.filter.selectText(nil); return }
         let controller = QuickOpenPicker(paths: state.files, recent: history.recentFiles(in: state.root))
         let editor = workspace.editor
@@ -597,77 +603,56 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         quickOpen?.view.removeFromSuperview(); quickOpen?.removeFromParent(); quickOpen = nil
     }
 
-    @objc func showHistory() {
-        guard !session.isSwitching else { return }
-        dismissShortcuts()
-        dismissQuickOpen()
-        dismissCodeHover()
-        if historyPicker != nil { dismissHistory(); return }
-        picker?.close()
-        pickerRequest = UUID()
-        let controller = WorkspaceHistoryPicker(entries: history.entries, current: session.state?.root, available: { [history] in history.isAvailable($0) })
-        addChild(controller)
-        let surface = controller.view
-        workspace.add(surface)
-        let height = surface.heightAnchor.constraint(equalToConstant: controller.preferredHeight)
-        NSLayoutConstraint.activate([
-            surface.trailingAnchor.constraint(equalTo: workspace.trailingAnchor, constant: -16),
-            surface.topAnchor.constraint(equalTo: workspace.header.bottomAnchor),
-            surface.widthAnchor.constraint(equalToConstant: 560), height
-        ])
-        controller.onChoose = { [weak self] root in
-            guard let self else { return }
+    private func configureHistorySidebar() {
+        let sidebar = WorkspaceHistorySidebar(entries: history.entries, current: nil, available: { [history] in history.isAvailable($0) })
+        historySidebar = sidebar
+        addChild(sidebar)
+        workspace.recentHost.add(sidebar.view)
+        Theme.pin(sidebar.view, to: workspace.recentHost)
+        sidebar.onInteract = { [weak self] in
+            self?.dismissShortcuts(); self?.dismissQuickOpen(); self?.dismissCodeHover()
+            self?.picker?.close(); self?.pickerRequest = UUID()
+        }
+        sidebar.onChoose = { [weak self] root in
+            guard let self, !self.session.isSwitching else { return }
             guard self.history.isAvailable(root) else {
                 self.workspace.status.message.stringValue = "This recent folder is no longer available: " + root.path
                 return
             }
             self.open(root)
         }
-        controller.onDismiss = { [weak self] in self?.dismissHistory() }
-        controller.onRemove = { [weak self, weak controller] root in
-            guard let self else { return }
+        sidebar.onRemove = { [weak self] root in
+            guard let self, !self.session.isSwitching else { return }
             self.history.removeRecent(root)
-            controller?.update(entries: self.history.entries)
-            height.constant = controller?.preferredHeight ?? 180
-            if let error = self.history.persistenceError { self.workspace.status.message.stringValue = error }
+            self.updateHistorySidebar()
         }
-        controller.onClear = { [weak self, weak controller] in
-            guard let self else { return }
+        sidebar.onClear = { [weak self] in
+            guard let self, !self.session.isSwitching else { return }
             self.history.clearRecents()
-            controller?.update(entries: self.history.entries)
-            height.constant = controller?.preferredHeight ?? 180
-            if let error = self.history.persistenceError { self.workspace.status.message.stringValue = error }
+            self.updateHistorySidebar()
         }
-        historyPicker = controller
-        workspace.header.historyButton.isSelected = true
-        workspace.layoutSubtreeIfNeeded()
-        view.window?.makeFirstResponder(controller.filter)
-        historyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self, weak controller] event in
-            guard let self, let controller, event.window === self.view.window else { return event }
-            if event.type == .keyDown {
-                if event.keyCode == 53 { self.dismissHistory(); return nil }
-            } else {
-                // Native title-bar interactions activate or move the window; keep
-                // the panel open until the user clicks elsewhere in its content.
-                if event.locationInWindow.y > (event.window?.contentLayoutRect.maxY ?? .infinity) { return event }
-                let point = controller.view.convert(event.locationInWindow, from: nil)
-                if !controller.view.bounds.contains(point) {
-                    // Leave the header button to toggle the panel exactly once.
-                    let button = self.workspace.header.historyButton
-                    if !button.bounds.contains(button.convert(event.locationInWindow, from: nil)) { self.dismissHistory() }
-                }
-            }
-            return event
+        workspace.restoreRecentSidebarWidth(history.recentSidebarWidth)
+        workspace.onRecentWidthChanged = { [weak self] width in
+            guard let self else { return }
+            self.historyWidthSave?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.history.saveRecentSidebarWidth(width) }
+            self.historyWidthSave = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
         }
     }
 
-    private func dismissHistory() {
+    private func updateHistorySidebar() {
+        historySidebar?.update(entries: history.entries, current: session.state?.root)
+        if let error = history.persistenceError { workspace.status.message.stringValue = error }
+    }
 
-        if let historyMonitor { NSEvent.removeMonitor(historyMonitor); self.historyMonitor = nil }
-        historyPicker?.view.removeFromSuperview()
-        historyPicker?.removeFromParent()
-        historyPicker = nil
-        workspace.header.historyButton.isSelected = false
+    @objc func showHistory() {
+        guard !session.isSwitching else { return }
+        historySidebar.onInteract?()
+        workspace.restoreRecentSidebarWidth(max(200, workspace.recentSidebarWidth))
+        workspace.layoutSubtreeIfNeeded()
+        historySidebar.view.layoutSubtreeIfNeeded()
+        view.window?.makeFirstResponder(historySidebar.filter)
     }
 
     private func showPicker(_ kind: GitDestinationPicker.Kind, anchor: NSButton) {
@@ -675,7 +660,6 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         dismissShortcuts()
         dismissCodeHover()
         dismissQuickOpen()
-        dismissHistory()
         picker?.close()
         let controller = GitDestinationPicker(kind: kind)
         let popover = NSPopover()
@@ -722,6 +706,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         inspection.dismiss()
         language.stop()
         workspace.status.language.stringValue = ""
+        historySidebar?.setBusy(true)
         workspace.header.setBusy(true)
         workspace.navigation.search.isEnabled = false
         workspace.explorer.outline.isEnabled = false
@@ -731,6 +716,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             if let self, !self.workspace.searchHost.isHidden { self.projectSearch.setActive(true) }
             self?.readingStateReady = self?.displayedState != nil
             self?.workspace.editorGroups.editors.forEach { $0.allowsNavigation = true }
+            self?.historySidebar?.setBusy(false)
             self?.workspace.header.setBusy(false)
             self?.processExternalOpen()
             self?.workspace.navigation.search.isEnabled = self?.session.state != nil
@@ -749,18 +735,20 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         workspace.status.language.stringValue = ""
     }
     private func dismissCodeHover() {
+        historySidebar?.details.dismiss()
         hoverRequest = UUID()
         workspace.editor.right.text.cancelInspection()
         inspection.dismissHover()
     }
     func shutdown() {
         cancelExternalOpen()
+        historySidebar?.details.dismiss()
         saveReadingSession()
         readingStateReady = false
         dismissShortcuts(); cancelShortcutChord()
         if let shortcutKeyMonitor { NSEvent.removeMonitor(shortcutKeyMonitor); self.shortcutKeyMonitor = nil }
         if let shortcutFocusObserver { NotificationCenter.default.removeObserver(shortcutFocusObserver); self.shortcutFocusObserver = nil }
-        dismissQuickOpen(); projectSearch.cancel(); dismissHistory(); picker?.close(); session.close(); inspection.dismiss(); language.stop()
+        dismissQuickOpen(); projectSearch.cancel(); picker?.close(); session.close(); inspection.dismiss(); language.stop()
     }
 
     private func configureReadingPersistence() {
@@ -786,6 +774,8 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     func saveReadingSession() {
         readingSave?.cancel(); readingSave = nil
+        historyWidthSave?.cancel(); historyWidthSave = nil
+        history.saveRecentSidebarWidth(workspace.preferredRecentSidebarWidth)
         guard readingStateReady, let state = displayedState else { return }
         treeSessions[changesOnly ? "changes" : "files"] = workspace.explorer.captureSession()
         let groups = workspace.editorGroups
@@ -838,7 +828,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         cancelShortcutChord()
         guard let window = view.window else { return }
         if let shortcutsPicker { window.makeFirstResponder(shortcutsPicker.filter); shortcutsPicker.filter.selectText(nil); return }
-        dismissCodeHover(); dismissQuickOpen(); dismissHistory(); picker?.close(); pickerRequest = UUID()
+        dismissCodeHover(); dismissQuickOpen(); picker?.close(); pickerRequest = UUID()
         let focused = window.firstResponder as? NSView
         if let fieldEditor = focused as? NSTextView, fieldEditor.isFieldEditor { shortcutPreviousFocus = fieldEditor.delegate as? NSView }
         else { shortcutPreviousFocus = focused }

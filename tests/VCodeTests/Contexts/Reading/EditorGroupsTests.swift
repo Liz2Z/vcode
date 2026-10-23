@@ -36,7 +36,7 @@ final class EditorGroupsTests: XCTestCase {
         first.layoutSubtreeIfNeeded()
         first.right.sync(to: NSPoint(x: 0, y: 300))
         let position = first.right.scroll.contentView.bounds.origin
-        let outer = try XCTUnwrap(workspace.subviews.compactMap { $0 as? WorkspaceSplitView }.first)
+        let outer = try XCTUnwrap(Optional(workspace.contentSplit))
         outer.setPosition(10_000, ofDividerAt: 0)
         first.splitEditorButton.performClick(nil)
         XCTAssertEqual(groups.editors.count, 2)

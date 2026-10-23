@@ -123,6 +123,79 @@ final class PointerFeedbackTests: XCTestCase {
         XCTAssertTrue(rows[1].hasClickAction)
     }
 
+    func testRecentRowsShowHandOnFirstEntryAcrossCompactAndExpandedModes() throws {
+        let originalCursor = NSCursor.current
+        defer { originalCursor.set() }
+        let roots = ["current", "available", "missing"].map { URL(fileURLWithPath: "/tmp/recent-pointer/" + $0) }
+        let entries = roots.enumerated().map { RecentWorkspace(state: WorkspaceState(root: $0.element, files: [], git: nil), openedAt: Date(timeIntervalSince1970: Double(3 - $0.offset))) }
+        let sidebar = WorkspaceHistorySidebar(entries: entries, current: roots[0], available: { $0 != roots[2] })
+        let window = CursorWindow(contentRect: NSRect(x: 0, y: 0, width: 48, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentViewController = sidebar
+        defer { window.close() }
+        var opened = 0
+        sidebar.onChoose = { _ in opened += 1 }
+        func move(_ point: NSPoint, expected: NSCursor) throws {
+            let location = sidebar.table.convert(point, to: nil)
+            let entered = try XCTUnwrap(NSEvent.enterExitEvent(with: .mouseEntered, location: location, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, trackingNumber: 0, userData: nil))
+            let update = try XCTUnwrap(NSEvent.enterExitEvent(with: .cursorUpdate, location: location, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 2, trackingNumber: 0, userData: nil))
+            let moved = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: location, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 3, clickCount: 0, pressure: 0))
+            for event in [entered, update, moved] {
+                NSCursor.crosshair.set()
+                switch event.type {
+                case .mouseEntered: sidebar.table.mouseEntered(with: event)
+                case .cursorUpdate: sidebar.table.cursorUpdate(with: event)
+                default: sidebar.table.mouseMoved(with: event)
+                }
+                XCTAssertEqual(NSCursor.current, expected, "First pointer event must work without selecting a row")
+            }
+        }
+        for width: CGFloat in [48, 159, 160, 240, 48] {
+            window.setContentSize(NSSize(width: width, height: 600))
+            sidebar.view.layoutSubtreeIfNeeded(); sidebar.table.updateTrackingAreas()
+            let areas = sidebar.table.trackingAreas.filter { ($0.owner as? HistoryTableView) === sidebar.table }
+            XCTAssertTrue(areas.contains { $0.options.contains([.mouseMoved, .mouseEnteredAndExited, .activeAlways]) })
+            XCTAssertTrue(areas.contains { $0.options.contains([.cursorUpdate, .activeInKeyWindow]) })
+            for row in sidebar.rows.indices {
+                let rect = sidebar.table.rect(ofRow: row).intersection(sidebar.table.visibleRect)
+                let clickable: Bool
+                if case .workspace(let entry) = sidebar.rows[row] { clickable = entry.root != roots[2] }
+                else { clickable = false }
+                // Avoid expanded cleanup buttons; their own hit target is tested below.
+                for x in [rect.minX + 4, rect.midX] {
+                    try move(NSPoint(x: x, y: rect.midY), expected: clickable ? .pointingHand : .arrow)
+                }
+                if sidebar.isCompact { try move(NSPoint(x: rect.maxX - 4, y: rect.midY), expected: clickable ? .pointingHand : .arrow) }
+            }
+            // Follow the user's actual path: another workspace -> current one ->
+            // another workspace. Current navigation still advertises a hand.
+            for root in [roots[1], roots[0], roots[1]] {
+                let row = sidebar.rows.firstIndex { if case .workspace(let entry) = $0 { return entry.root == root }; return false }!
+                let rect = sidebar.table.rect(ofRow: row)
+                try move(NSPoint(x: rect.midX, y: rect.midY), expected: .pointingHand)
+            }
+            let currentRow = sidebar.rows.firstIndex { if case .workspace(let entry) = $0 { return entry.root == roots[0] }; return false }!
+            let currentRect = sidebar.table.rect(ofRow: currentRow)
+            let click = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: sidebar.table.convert(NSPoint(x: currentRect.midX, y: currentRect.midY), to: nil), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 4, clickCount: 1, pressure: 1))
+            sidebar.table.mouseDown(with: click)
+            XCTAssertEqual(opened, 0, "Current navigation hand must not cause a redundant workspace open")
+            let availableRow = sidebar.rows.firstIndex { if case .workspace(let entry) = $0 { return entry.root == roots[1] }; return false }!
+            let availableRect = sidebar.table.rect(ofRow: availableRow)
+            sidebar.setBusy(true)
+            try move(NSPoint(x: availableRect.midX, y: availableRect.midY), expected: .arrow)
+            sidebar.setBusy(false)
+            if !sidebar.isCompact {
+                let cell = try XCTUnwrap(sidebar.table.view(atColumn: 0, row: 1, makeIfNecessary: true) as? HistoryCell)
+                cell.layoutSubtreeIfNeeded()
+                let buttonPoint = cell.removeButton.convert(NSPoint(x: cell.removeButton.bounds.midX, y: cell.removeButton.bounds.midY), to: sidebar.table)
+                try move(buttonPoint, expected: .pointingHand)
+            }
+            let empty = NSPoint(x: sidebar.table.visibleRect.midX, y: sidebar.table.rect(ofRow: sidebar.rows.count - 1).maxY + 12)
+            try move(empty, expected: .arrow)
+            XCTAssertEqual(sidebar.table.selectedRow, -1)
+        }
+        XCTAssertEqual(opened, 0)
+    }
+
     func testTreeHoverShowsHandBeforeAnyClickIncludingChangesSections() throws {
         let originalCursor = NSCursor.current
         defer { originalCursor.set() }

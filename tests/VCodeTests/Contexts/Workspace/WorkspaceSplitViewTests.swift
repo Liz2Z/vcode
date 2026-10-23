@@ -5,12 +5,59 @@ import XCTest
 final class WorkspaceSplitViewTests: XCTestCase {
     override func setUp() { _ = NSApplication.shared }
 
+    func testLeftRecentRailResizesAcrossThresholdWithoutSqueezingEditorGroups() throws {
+        let workspace = WorkspaceView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1360, height: 700), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = workspace
+        defer { window.close() }
+        let root = URL(fileURLWithPath: "/tmp/recent-spacing")
+        let entry = RecentWorkspace(state: WorkspaceState(root: root, files: [], git: nil), openedAt: Date())
+        let recent = WorkspaceHistorySidebar(entries: [entry], current: root, available: { _ in true })
+        workspace.recentHost.add(recent.view)
+        Theme.pin(recent.view, to: workspace.recentHost)
+        for width: Double in [48, 159, 160, 240, 360, 48] {
+            workspace.restoreRecentSidebarWidth(width)
+            workspace.layoutSubtreeIfNeeded()
+            XCTAssertEqual(workspace.recentSidebarWidth, width, accuracy: 0.5)
+            XCTAssertEqual(workspace.recentHost.frame.minX, 0, accuracy: 0.5)
+            XCTAssertEqual(workspace.contentSplit.frame.maxX, workspace.recentSplit.bounds.maxX, accuracy: 0.5)
+            XCTAssertGreaterThanOrEqual(workspace.editorGroups.bounds.width, 220)
+            XCTAssertEqual(workspace.recentSplit.dividerThickness, 12)
+            recent.view.layoutSubtreeIfNeeded()
+            let visibleRecent: NSRect
+            if recent.isCompact {
+                let row = try XCTUnwrap(recent.table.rowView(atRow: 0, makeIfNecessary: true) as? SelectionRowView)
+                visibleRecent = row.convert(row.backgroundRect, to: workspace)
+            } else {
+                visibleRecent = recent.view.convert(recent.view.bounds, to: workspace)
+            }
+            let files = workspace.contentSplit.arrangedSubviews[0]
+            let filesRect = files.convert(files.bounds, to: workspace)
+            let editorRect = workspace.editorGroups.convert(workspace.editorGroups.bounds, to: workspace)
+            XCTAssertEqual(visibleRecent.minX, Theme.Layout.inset, accuracy: 0.5, "Visible left margin must match the right margin, including row background insets")
+            XCTAssertEqual(workspace.bounds.maxX - editorRect.maxX, Theme.Layout.inset, accuracy: 0.5)
+            XCTAssertEqual(filesRect.minX - visibleRecent.maxX, Theme.Layout.moduleGap, accuracy: 0.5, "Recent-to-Files visible gap must match Files-to-editor")
+            XCTAssertEqual(editorRect.minX - filesRect.maxX, Theme.Layout.moduleGap, accuracy: 0.5)
+        }
+        workspace.restoreRecentSidebarWidth(360)
+        workspace.editorGroups.setWorkspaceOpen(true)
+        workspace.editorGroups.splitActiveEditor(copyDocument: false)
+        for width: CGFloat in [920, 1360, 920] {
+            window.setContentSize(NSSize(width: width, height: 700))
+            workspace.layoutSubtreeIfNeeded()
+            XCTAssertGreaterThanOrEqual(workspace.recentSidebarWidth, 48)
+            XCTAssertLessThanOrEqual(workspace.recentSidebarWidth, 360)
+            XCTAssertGreaterThanOrEqual(workspace.sidebarWidth, 220)
+            XCTAssertGreaterThanOrEqual(workspace.editorGroups.bounds.width, workspace.editorGroups.minimumWidth - 0.5)
+        }
+    }
+
     func testSidebarTravelUsesAvailableWidthAndKeepsBothPanesAtLeast220() throws {
         let workspace = WorkspaceView()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1360, height: 700), styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = workspace
         defer { withExtendedLifetime(window) {} }
-        let split = try XCTUnwrap(workspace.subviews.compactMap { $0 as? WorkspaceSplitView }.first)
+        let split = try XCTUnwrap(Optional(workspace.contentSplit))
         for width: CGFloat in [1360, 920, 1700, 920] {
             window.setContentSize(NSSize(width: width, height: 700))
             workspace.layoutSubtreeIfNeeded()
@@ -37,7 +84,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         window.contentView = workspace
         defer { withExtendedLifetime(window) {} }
         workspace.layoutSubtreeIfNeeded()
-        let split = try XCTUnwrap(workspace.subviews.compactMap { $0 as? WorkspaceSplitView }.first)
+        let split = try XCTUnwrap(Optional(workspace.contentSplit))
         for position: CGFloat in [220, 700, 1000, 240] {
             split.setPosition(position, ofDividerAt: 0)
             let areas = split.trackingAreas.filter { ($0.owner as? WorkspaceSplitView) === split }
@@ -64,7 +111,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         window.contentView = workspace
         defer { withExtendedLifetime(window) {} }
         workspace.layoutSubtreeIfNeeded()
-        let split = try XCTUnwrap(workspace.subviews.compactMap { $0 as? WorkspaceSplitView }.first)
+        let split = try XCTUnwrap(Optional(workspace.contentSplit))
         for position: CGFloat in [-100, 10_000, 700, -100] {
             split.setPosition(position, ofDividerAt: 0)
             let area = try XCTUnwrap(split.trackingAreas.first { ($0.owner as? WorkspaceSplitView) === split })

@@ -205,8 +205,8 @@ final class InspectionPresentationTests: XCTestCase {
         workspace.layoutSubtreeIfNeeded()
         presenter.show(.hover("```typescript\ninterface Settings\n```"), kind: .hover, index: 12, textView: workspace.editor.right.text, root: root)
         XCTAssertNotNil(presenter.hoverPanel)
-        workspace.header.historyButton.performClick(nil)
+        controller.showHistory()
         XCTAssertNil(presenter.hoverPanel, "Native actions can bypass mouse monitors and must dismiss the hint themselves")
-        XCTAssertTrue(controller.children.contains { $0 is WorkspaceHistoryPicker })
+        XCTAssertTrue(controller.children.contains { $0 is WorkspaceHistorySidebar })
     }
 }

@@ -4,13 +4,11 @@ final class WorkspaceHeader: NSView {
     let branchButton = Theme.actionButton("—", symbol: "arrow.triangle.branch")
     let worktreeButton = Theme.actionButton("—", symbol: "folder")
     let openButton = Theme.actionButton("Open Folder", symbol: "folder.badge.plus")
-    let historyButton = Theme.actionButton("Recent", symbol: "clock.arrow.circlepath")
     private var isGit = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         openButton.toolTip = "Open Folder (⌘O)"
-        historyButton.toolTip = "Recently opened projects and worktrees"
         branchButton.setAccessibilityLabel("Branch")
         worktreeButton.setAccessibilityLabel("Worktree")
         worktreeButton.title = "VCode"
@@ -24,11 +22,10 @@ final class WorkspaceHeader: NSView {
             (button.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingMiddle
         }
         worktreeButton.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(252), for: .horizontal)
-        add(worktreeButton, branchButton, historyButton, openButton)
+        add(worktreeButton, branchButton, openButton)
         NSLayoutConstraint.activate([
             worktreeButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 96), worktreeButton.centerYAnchor.constraint(equalTo: centerYAnchor), worktreeButton.widthAnchor.constraint(lessThanOrEqualToConstant: 320), worktreeButton.heightAnchor.constraint(equalToConstant: 32),
-            branchButton.leadingAnchor.constraint(equalTo: worktreeButton.trailingAnchor, constant: 8), branchButton.centerYAnchor.constraint(equalTo: centerYAnchor), branchButton.widthAnchor.constraint(lessThanOrEqualToConstant: 200), branchButton.heightAnchor.constraint(equalToConstant: 32), branchButton.trailingAnchor.constraint(lessThanOrEqualTo: historyButton.leadingAnchor, constant: -16),
-            historyButton.trailingAnchor.constraint(equalTo: openButton.leadingAnchor, constant: -8), historyButton.centerYAnchor.constraint(equalTo: centerYAnchor), historyButton.heightAnchor.constraint(equalToConstant: 32),
+            branchButton.leadingAnchor.constraint(equalTo: worktreeButton.trailingAnchor, constant: 8), branchButton.centerYAnchor.constraint(equalTo: centerYAnchor), branchButton.widthAnchor.constraint(lessThanOrEqualToConstant: 200), branchButton.heightAnchor.constraint(equalToConstant: 32), branchButton.trailingAnchor.constraint(lessThanOrEqualTo: openButton.leadingAnchor, constant: -16),
             openButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16), openButton.centerYAnchor.constraint(equalTo: centerYAnchor), openButton.heightAnchor.constraint(equalToConstant: 32)
         ])
     }
@@ -47,7 +44,6 @@ final class WorkspaceHeader: NSView {
         branchButton.isEnabled = isGit && !busy
         worktreeButton.isEnabled = isGit && !busy
         openButton.isEnabled = !busy
-        historyButton.isEnabled = !busy
     }
 }
 

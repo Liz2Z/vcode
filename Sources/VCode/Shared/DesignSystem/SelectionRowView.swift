@@ -1,6 +1,10 @@
 import AppKit
 
 final class SelectionRowView: NSTableRowView {
+    var backgroundHorizontalInset: CGFloat = 1 { didSet { needsDisplay = true } }
+    var backgroundRect: NSRect { bounds.insetBy(dx: backgroundHorizontalInset, dy: 2) }
+    var cursorHandledByTable = false
+    var isCurrent = false { didSet { needsDisplay = true } }
     var isHovered = false { didSet { needsDisplay = true } }
     var isPressed = false { didSet { needsDisplay = true } }
     var isActionEnabled = true { didSet { window?.invalidateCursorRects(for: self) } }
@@ -29,7 +33,7 @@ final class SelectionRowView: NSTableRowView {
     override func resetCursorRects() {
         super.resetCursorRects()
         // FileOutlineView owns its complete row width and hover events.
-        if !(owningTable is NSOutlineView), hasClickAction, !visibleRect.isEmpty {
+        if !cursorHandledByTable, !(owningTable is NSOutlineView), hasClickAction, !visibleRect.isEmpty {
             addCursorRect(visibleRect, cursor: .pointingHand)
         }
     }
@@ -46,21 +50,23 @@ final class SelectionRowView: NSTableRowView {
 
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
-    override func prepareForReuse() { super.prepareForReuse(); isHovered = false; isPressed = false; isActionEnabled = true }
+    override func prepareForReuse() { super.prepareForReuse(); isHovered = false; isPressed = false; isActionEnabled = true; isCurrent = false; backgroundHorizontalInset = 1; cursorHandledByTable = false }
 
     private func fill(_ color: NSColor) {
         color.setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 2), xRadius: 6, yRadius: 6).fill()
+        NSBezierPath(roundedRect: backgroundRect, xRadius: 6, yRadius: 6).fill()
     }
 
     override func drawBackground(in dirtyRect: NSRect) {
-        if !isSelected {
+        if isCurrent { fill(Theme.accent.withAlphaComponent(0.13)) }
+        else if !isSelected {
             if isPressed { fill(Theme.accent.withAlphaComponent(0.32)) }
             else if isHovered { fill(NSColor.white.withAlphaComponent(0.09)) }
         }
     }
 
     override func drawSelection(in dirtyRect: NSRect) {
+        guard !isCurrent else { return }
         fill(Theme.accent.withAlphaComponent(isPressed ? 0.34 : isHovered ? 0.27 : isEmphasized ? 0.20 : 0.13))
     }
 }

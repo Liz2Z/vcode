@@ -159,7 +159,7 @@ final class KeyboardShortcutsTests: XCTestCase {
         XCTAssertNil(controller.shortcutsPicker)
         controller.showKeyboardShortcuts()
         XCTAssertTrue(controller.children.contains { $0 === controller.shortcutsPicker })
-        XCTAssertEqual(controller.children.count, 2, "Search controller and one help controller only")
+        XCTAssertEqual(controller.children.count, 3, "Persistent Search and Recent controllers plus help")
     }
 
     func testPendingChordCancelsOnClickOtherWindowAndResigningKey() throws {

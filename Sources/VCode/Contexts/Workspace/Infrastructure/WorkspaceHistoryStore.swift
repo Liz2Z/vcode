@@ -15,6 +15,7 @@ final class WorkspaceHistoryStore {
         var window: WindowPlacement?
         var recentFiles: [String: [String]]?
         var readingSessions: [String: WorkspaceReadingSession]?
+        var recentSidebarWidth: Double?
     }
     let file: URL
     private var stored = StoredState()
@@ -24,6 +25,7 @@ final class WorkspaceHistoryStore {
     var entries: [RecentWorkspace] { stored.entries }
     var lastFolder: URL? { stored.lastFolder }
     var windowPlacement: WindowPlacement? { stored.window }
+    var recentSidebarWidth: Double { stored.recentSidebarWidth.flatMap { $0.isFinite && $0 >= 48 ? min(360, $0) : nil } ?? 48 }
     static let limit = 40
 
     init(directory: URL = XDGDirectories().state, legacyDefaults: UserDefaults? = .standard) {
@@ -58,8 +60,13 @@ final class WorkspaceHistoryStore {
     }
 
     func record(_ state: WorkspaceState, at date: Date = Date()) {
-        stored.entries.removeAll { $0.root == state.root }
-        stored.entries.insert(RecentWorkspace(state: state, openedAt: date), at: 0)
+        // Existing workspace shortcuts stay where the user expects them. Only
+        // newly added directories enter at the front; revisits refresh metadata.
+        if let index = stored.entries.firstIndex(where: { $0.root == state.root }) {
+            stored.entries[index] = RecentWorkspace(state: state, openedAt: stored.entries[index].openedAt)
+        } else {
+            stored.entries.insert(RecentWorkspace(state: state, openedAt: date), at: 0)
+        }
         stored.entries = Array(stored.entries.prefix(Self.limit))
         stored.lastFolder = state.root
         persist()
@@ -90,6 +97,14 @@ final class WorkspaceHistoryStore {
     func saveWindow(_ placement: WindowPlacement) {
         guard stored.window != placement else { return }
         stored.window = placement
+        persist()
+    }
+
+    func saveRecentSidebarWidth(_ width: Double) {
+        guard width.isFinite else { return }
+        let width = min(360, max(48, width))
+        guard stored.recentSidebarWidth != width else { return }
+        stored.recentSidebarWidth = width
         persist()
     }
 

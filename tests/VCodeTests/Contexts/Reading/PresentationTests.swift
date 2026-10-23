@@ -65,7 +65,7 @@ final class PresentationTests: XCTestCase {
             window.setContentSize(size)
             workspace.layoutSubtreeIfNeeded()
             workspace.editor.layoutSubtreeIfNeeded()
-            for button in [workspace.header.branchButton, workspace.header.worktreeButton, workspace.header.historyButton, workspace.header.openButton] {
+            for button in [workspace.header.branchButton, workspace.header.worktreeButton, workspace.header.openButton] {
                 let frame = button.convert(button.bounds, to: workspace.header)
                 XCTAssertTrue(workspace.header.bounds.insetBy(dx: -1, dy: -1).contains(frame))
                 XCTAssertGreaterThan(frame.width, 40)
