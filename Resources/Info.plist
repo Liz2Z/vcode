@@ -7,8 +7,16 @@
     <key>CFBundleIdentifier</key><string>dev.vcode.native</string>
     <key>CFBundleExecutable</key><string>VCode</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.5.12</string>
-    <key>CFBundleVersion</key><string>20</string>
+    <key>CFBundleShortVersionString</key><string>0.5.13</string>
+    <key>CFBundleVersion</key><string>21</string>
+    <key>SUFeedURL</key><string>https://github.com/Liz2Z/vcode/releases/download/updates/appcast.xml</string>
+    <key>SUPublicEDKey</key><string>iEAPQ3fkGmB0C6E7uCRVprtITeLF/OQG/6iUpDcS5W8=</string>
+    <key>SUEnableAutomaticChecks</key><true/>
+    <key>SUScheduledCheckInterval</key><integer>3600</integer>
+    <key>SUAutomaticallyUpdate</key><false/>
+    <key>SUEnableSystemProfiling</key><false/>
+    <key>SUVerifyUpdateBeforeExtraction</key><true/>
+    <key>SURequireSignedFeed</key><true/>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>

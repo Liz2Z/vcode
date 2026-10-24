@@ -15,6 +15,20 @@ app="$staging/VCode.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/TypeScript"
 cp .build/release/VCode "$app/Contents/MacOS/VCode"
 cp Resources/Info.plist "$app/Contents/Info.plist"
+if [[ -n "${VCODE_BUILD_VERSION:-}" ]]; then
+    [[ "$VCODE_BUILD_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || { echo 'Invalid build version.' >&2; exit 1; }
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VCODE_BUILD_VERSION" "$app/Contents/Info.plist"
+fi
+if [[ -n "${VCODE_MARKETING_VERSION:-}" ]]; then
+    [[ "$VCODE_MARKETING_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || { echo 'Invalid marketing version.' >&2; exit 1; }
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VCODE_MARKETING_VERSION" "$app/Contents/Info.plist"
+fi
+mkdir -p "$app/Contents/Frameworks"
+sparkle=".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+test -d "$sparkle"
+/usr/bin/ditto "$sparkle" "$app/Contents/Frameworks/Sparkle.framework"
+mkdir -p "$app/Contents/Resources/Licenses/Sparkle"
+cp .build/checkouts/Sparkle/LICENSE "$app/Contents/Resources/Licenses/Sparkle/"
 rm -rf "$app/Contents/Resources/TypeScript/node_modules"
 cp -R Tools/TypeScript/node_modules "$app/Contents/Resources/TypeScript/"
 

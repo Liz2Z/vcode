@@ -24,6 +24,9 @@ test "$("$app/Contents/Resources/Runtime/node" -p 'process.arch')" = arm64
 "$app/Contents/Resources/Runtime/rg" --version
 test -f "$app/Contents/Resources/TypeScript/node_modules/typescript-language-server/lib/cli.mjs"
 test -f "$app/Contents/Resources/TypeScript/node_modules/typescript/lib/tsserver.js"
+test -d "$app/Contents/Frameworks/Sparkle.framework"
+test -x "$app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
+/usr/bin/otool -L "$app/Contents/MacOS/VCode" | /usr/bin/grep -q '@rpath/Sparkle.framework/'
 /usr/bin/codesign --verify --deep --strict "$app"
 /usr/bin/plutil -lint "$app/Contents/Info.plist"
 
