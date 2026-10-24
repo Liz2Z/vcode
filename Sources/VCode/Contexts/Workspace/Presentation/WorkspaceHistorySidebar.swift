@@ -296,6 +296,8 @@ final class HistoryCell: NSTableCellView {
     private var tracking: NSTrackingArea?
     private var fullConstraints: [NSLayoutConstraint] = []
     private var compactConstraints: [NSLayoutConstraint] = []
+    private var isCompact = false
+    private var repositoryName = ""
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         title.lineBreakMode = .byTruncatingMiddle; path.lineBreakMode = .byTruncatingMiddle
@@ -309,20 +311,28 @@ final class HistoryCell: NSTableCellView {
             removeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4), removeButton.centerYAnchor.constraint(equalTo: centerYAnchor), removeButton.widthAnchor.constraint(equalToConstant: 24), removeButton.heightAnchor.constraint(equalToConstant: 24)
         ]
         compactConstraints = [
-            title.centerXAnchor.constraint(equalTo: centerXAnchor), title.centerYAnchor.constraint(equalTo: centerYAnchor), title.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -8),
+            title.centerXAnchor.constraint(equalTo: centerXAnchor), title.centerYAnchor.constraint(equalTo: centerYAnchor), title.widthAnchor.constraint(equalTo: widthAnchor, constant: -8), title.heightAnchor.constraint(lessThanOrEqualTo: heightAnchor, constant: -8),
             removeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -1), removeButton.topAnchor.constraint(equalTo: topAnchor, constant: 1), removeButton.widthAnchor.constraint(equalToConstant: 14), removeButton.heightAnchor.constraint(equalToConstant: 14)
         ]
     }
     required init?(coder: NSCoder) { fatalError() }
     func configure(_ entry: RecentWorkspace, compact: Bool, current: Bool, available: Bool) {
+        isCompact = compact
         NSLayoutConstraint.deactivate(compact ? fullConstraints : compactConstraints)
         NSLayoutConstraint.activate(compact ? compactConstraints : fullConstraints)
         let name = entry.root.lastPathComponent
-        let words = name.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
-        let abbreviation = words.count > 1 ? words.prefix(2).compactMap(\.first).map(String.init).joined() : String(name.prefix(2))
-        title.stringValue = compact ? abbreviation.uppercased() : name
-        title.font = .systemFont(ofSize: compact ? 11 : 12, weight: current ? .semibold : .medium)
-        title.textColor = current ? Theme.accent : available ? Theme.text : Theme.muted
+        repositoryName = entry.projectName
+        title.stringValue = compact ? entry.projectName : name
+        title.font = .systemFont(ofSize: compact ? 9 : 12, weight: current ? .semibold : .medium)
+        title.maximumNumberOfLines = compact ? 2 : 1
+        title.lineBreakMode = compact ? .byTruncatingTail : .byTruncatingMiddle
+        title.alignment = compact ? .center : .left
+        (title.cell as? NSTextFieldCell)?.usesSingleLineMode = !compact
+        title.preferredMaxLayoutWidth = compact ? max(1, bounds.width - 8) : 0
+        title.invalidateIntrinsicContentSize()
+        updateCompactTitle()
+        let inactiveColor = compact ? Theme.muted : Theme.text
+        title.textColor = current ? Theme.accent : available ? inactiveColor : Theme.muted.withAlphaComponent(compact ? 0.65 : 1)
         path.stringValue = (entry.branch ?? "Folder") + " · " + entry.root.path
         path.isHidden = compact
         let state = current ? "Current" : available ? "" : "Unavailable"
@@ -334,6 +344,20 @@ final class HistoryCell: NSTableCellView {
         removeButton.setAccessibilityLabel("Remove from Recent: " + entry.root.path)
         removeButton.feedbackRadius = compact ? 3 : Theme.Layout.controlRadius
         wantsLayer = true; layer?.backgroundColor = NSColor.clear.cgColor
+    }
+    override func layout() {
+        updateCompactTitle()
+        super.layout()
+    }
+    private func updateCompactTitle() {
+        guard isCompact, let font = title.font else { return }
+        let width = max(1, bounds.width - 8)
+        let value = CompactWorkspaceName.text(repositoryName, font: font, width: max(1, width - 4))
+        if title.preferredMaxLayoutWidth != width || title.stringValue != value {
+            title.preferredMaxLayoutWidth = width
+            title.stringValue = value
+            title.invalidateIntrinsicContentSize()
+        }
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()

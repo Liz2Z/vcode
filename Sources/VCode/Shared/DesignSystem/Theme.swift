@@ -14,9 +14,14 @@ enum Theme {
     static let floating = color(light: 0xFFFFFF, dark: 0x2D2E31)
     static let text = color(light: 0x292C30, dark: 0xE6E6E3)
     static let muted = color(light: 0x646966, dark: 0xAAA9A5)
-    static let accent = color(light: 0x88610D, dark: 0xE6C579)
+    static let accent = color(light: 0x9A5B16, dark: 0xE6C579)
     static let green = color(light: 0x2C7046, dark: 0x88CCA0)
     static let red = color(light: 0xAA3541, dark: 0xE89A9E)
+    enum GitStatus {
+        static let modified = color(light: 0x9D4500, dark: 0xFFBE3B)
+        static let added = color(light: 0x006F2D, dark: 0x50D982)
+        static let deleted = color(light: 0xB91F35, dark: 0xFF6978)
+    }
     static let added = color(light: 0xEAF3E6, dark: 0x28362E)
     static let removed = color(light: 0xFAE8E8, dark: 0x392A30)
     static let placeholder = color(light: 0xF0F0ED, dark: 0x25262A)

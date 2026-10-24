@@ -81,7 +81,8 @@ final class WorkspaceNavigation: NSView {
             changes.leadingAnchor.constraint(equalTo: files.trailingAnchor, constant: 4), changes.topAnchor.constraint(equalTo: files.topAnchor), changes.bottomAnchor.constraint(equalTo: files.bottomAnchor),
             search.leadingAnchor.constraint(equalTo: changes.trailingAnchor, constant: 4), search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.Layout.controlGap), search.topAnchor.constraint(equalTo: files.topAnchor), search.bottomAnchor.constraint(equalTo: files.bottomAnchor),
             changesIndicator.widthAnchor.constraint(equalToConstant: 5), changesIndicator.heightAnchor.constraint(equalToConstant: 5),
-            changesIndicator.topAnchor.constraint(equalTo: changes.topAnchor, constant: 3), changesIndicator.trailingAnchor.constraint(equalTo: changes.trailingAnchor, constant: -4)
+            changesIndicator.leadingAnchor.constraint(equalTo: changes.titleView.trailingAnchor, constant: 3),
+            changesIndicator.centerYAnchor.constraint(equalTo: changes.titleView.topAnchor, constant: 1)
         ] + equalWidths)
         select(changes: false)
     }

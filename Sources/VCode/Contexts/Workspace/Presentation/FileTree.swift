@@ -303,12 +303,12 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         cell.label.stringValue = node.name
         cell.toolTip = node.path
         let kind = node.change?.kind
-        let color = kind == .added || kind == .untracked ? Theme.green : kind == .deleted ? Theme.red : Theme.accent
+        let color = kind == .added || kind == .untracked ? Theme.GitStatus.added : kind == .deleted ? Theme.GitStatus.deleted : Theme.GitStatus.modified
         cell.label.font = .systemFont(ofSize: node.isSection ? 11 : 13, weight: node.isSection ? .semibold : .regular)
         cell.label.textColor = node.isSection ? Theme.muted : Theme.text
         cell.isSection = node.isSection
         cell.badge.stringValue = node.isSection ? "\(sectionCounts[node.comparison ?? .unstaged] ?? 0)" : kind?.rawValue ?? ""
-        cell.badge.textColor = color
+        cell.badge.textColor = node.isSection ? Theme.accent : color
         return cell
     }
     func outlineViewSelectionDidChange(_ notification: Notification) {

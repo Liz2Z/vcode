@@ -25,6 +25,9 @@ final class GlassSurface: NSView {
             material = blur
         }
         super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = radius
+        layer?.masksToBounds = true
         addSubview(material)
         Theme.pin(material, to: self)
         Theme.pin(content, to: material)

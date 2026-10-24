@@ -13,6 +13,7 @@ final class FeedbackButton: PointingHandButton {
     }
     private let icon = NSImageView()
     private let label = ButtonTitleField(labelWithString: "")
+    var titleView: NSView { label }
     private let content = NSStackView()
     private var leadingInset: NSLayoutConstraint!
     private var trailingInset: NSLayoutConstraint!
