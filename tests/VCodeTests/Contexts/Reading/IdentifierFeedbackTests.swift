@@ -40,42 +40,67 @@ final class IdentifierFeedbackTests: XCTestCase {
     }
 
     func testCommandHoverOnlyUnderlinesConfirmedTargetsAndReleaseClearsIt() throws {
-        let (pane, window) = fixture()
-        defer { pane.text.cancelInspection(); window.close() }
-        var answers: [(Bool) -> Void] = []
-        pane.text.onDefinitionProbe = { _, answer in answers.append(answer) }
-        _ = try move(pane, word: "first", command: true)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.13))
-        XCTAssertEqual(answers.count, 1)
-        XCTAssertNil(pane.text.underlinedIdentifier)
-        answers[0](false)
-        XCTAssertNil(pane.text.underlinedIdentifier)
-        let second = try move(pane, word: "second", command: true)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.13))
-        answers[1](true)
-        XCTAssertEqual(pane.text.underlinedIdentifier, second)
-        XCTAssertNotNil(pane.text.layoutManager?.temporaryAttribute(.underlineStyle, atCharacterIndex: second.location, effectiveRange: nil))
-        let release = try XCTUnwrap(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 55))
-        pane.text.flagsChanged(with: release)
-        XCTAssertNil(pane.text.underlinedIdentifier)
-        XCTAssertNil(pane.text.layoutManager?.temporaryAttribute(.underlineStyle, atCharacterIndex: second.location, effectiveRange: nil))
+        // Also cover delivery slower than the former 130 ms sleep. Wait for the
+        // actual probe, rather than assuming how quickly CI services its queue.
+        for deliveryDelay in [0.0, 0.2] {
+            let (pane, window) = fixture()
+            defer { pane.text.cancelInspection(); window.close() }
+            let firstProbe = expectation(description: "First definition probe, delay \(deliveryDelay)")
+            let secondProbe = expectation(description: "Second definition probe, delay \(deliveryDelay)")
+            var answers: [(Bool) -> Void] = []
+            pane.text.onDefinitionProbe = { _, answer in
+                DispatchQueue.main.asyncAfter(deadline: .now() + deliveryDelay) {
+                    answers.append(answer)
+                    if answers.count == 1 { firstProbe.fulfill() }
+                    else if answers.count == 2 { secondProbe.fulfill() }
+                    else { XCTFail("Unexpected additional definition probe") }
+                }
+            }
+            _ = try move(pane, word: "first", command: true)
+            wait(for: [firstProbe], timeout: 5)
+            XCTAssertEqual(answers.count, 1)
+            let firstAnswer = try XCTUnwrap(answers.first, "First definition probe did not arrive")
+            XCTAssertNil(pane.text.underlinedIdentifier)
+            firstAnswer(false)
+            XCTAssertNil(pane.text.underlinedIdentifier)
+            let second = try move(pane, word: "second", command: true)
+            wait(for: [secondProbe], timeout: 5)
+            XCTAssertEqual(answers.count, 2)
+            let secondAnswer = try XCTUnwrap(answers.dropFirst().first, "Second definition probe did not arrive")
+            secondAnswer(true)
+            XCTAssertEqual(pane.text.underlinedIdentifier, second)
+            XCTAssertNotNil(pane.text.layoutManager?.temporaryAttribute(.underlineStyle, atCharacterIndex: second.location, effectiveRange: nil))
+            let release = try XCTUnwrap(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 55))
+            pane.text.flagsChanged(with: release)
+            XCTAssertNil(pane.text.underlinedIdentifier)
+            XCTAssertNil(pane.text.layoutManager?.temporaryAttribute(.underlineStyle, atCharacterIndex: second.location, effectiveRange: nil))
+        }
     }
 
     func testOldCommandProbeCannotUnderlineAFormerTarget() throws {
         let (pane, window) = fixture()
         defer { pane.text.cancelInspection(); window.close() }
+        let firstProbe = expectation(description: "First pending definition probe")
+        let secondProbe = expectation(description: "Second pending definition probe")
         var answers: [(Bool) -> Void] = []
-        pane.text.onDefinitionProbe = { _, answer in answers.append(answer) }
+        pane.text.onDefinitionProbe = { _, answer in
+            answers.append(answer)
+            if answers.count == 1 { firstProbe.fulfill() }
+            else if answers.count == 2 { secondProbe.fulfill() }
+            else { XCTFail("Unexpected additional definition probe") }
+        }
         _ = try move(pane, word: "first", command: true)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.13))
+        wait(for: [firstProbe], timeout: 5)
+        let firstAnswer = try XCTUnwrap(answers.first, "First definition probe did not arrive")
         let second = try move(pane, word: "second", command: true)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.13))
-        answers[0](true)
+        wait(for: [secondProbe], timeout: 5)
+        let secondAnswer = try XCTUnwrap(answers.dropFirst().first, "Second definition probe did not arrive")
+        firstAnswer(true)
         XCTAssertNil(pane.text.underlinedIdentifier)
-        answers[1](true)
+        secondAnswer(true)
         XCTAssertEqual(pane.text.underlinedIdentifier, second)
         pane.text.resetSymbolFeedback()
-        answers[1](true)
+        secondAnswer(true)
         XCTAssertNil(pane.text.underlinedIdentifier)
     }
 
@@ -89,15 +114,18 @@ final class IdentifierFeedbackTests: XCTestCase {
         pane.text.onSymbolClick = { _, answer in answers.append(answer) }
         pane.text.highlightSymbol(at: second.location)
         pane.text.highlightSymbol(at: first.location)
-        answers[0]([second])
+        XCTAssertEqual(answers.count, 2)
+        let firstAnswer = try XCTUnwrap(answers.first)
+        let secondAnswer = try XCTUnwrap(answers.dropFirst().first)
+        firstAnswer([second])
         XCTAssertTrue(pane.text.occurrenceRanges.isEmpty)
-        answers[1]([firstUse, first, first, NSRange(location: NSNotFound, length: 2)])
+        secondAnswer([firstUse, first, first, NSRange(location: NSNotFound, length: 2)])
         XCTAssertEqual(pane.text.occurrenceRanges, [first, firstUse])
         pane.text.clearInspectionFeedback()
         XCTAssertEqual(pane.text.occurrenceRanges, [first, firstUse])
         XCTAssertEqual((pane.text.layoutManager as? CodeLayoutManager)?.symbolRanges, [first, firstUse])
         pane.show(lines: [CodeLine(number: 1, text: "const changed = 1;", kind: .unchanged)], path: "new.ts", title: "", detail: "")
-        answers[1]([first])
+        secondAnswer([first])
         XCTAssertTrue(pane.text.occurrenceRanges.isEmpty)
         pane.text.highlightSymbol(at: nil)
         XCTAssertTrue(pane.text.occurrenceRanges.isEmpty)
