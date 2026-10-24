@@ -1,18 +1,69 @@
 import AppKit
 
 enum Theme {
-    static let canvas = NSColor(hex: 0x191A1C)
-    static let background = NSColor(hex: 0x202123)
-    static let surface = NSColor(hex: 0x303134)
-    static let floating = NSColor(hex: 0x2D2E31)
-    static let text = NSColor(hex: 0xE6E6E3)
-    static let muted = NSColor(hex: 0xAAA9A5)
-    static let accent = NSColor(hex: 0xE6C579)
-    static let green = NSColor(hex: 0x88CCA0)
-    static let red = NSColor(hex: 0xE89A9E)
-    static let added = NSColor(hex: 0x28362E)
-    static let removed = NSColor(hex: 0x392A30)
-    static let placeholder = NSColor(hex: 0x25262A)
+    // AppKit resolves these colors per appearance, including attributed source text.
+    static func color(light: UInt32, dark: UInt32) -> NSColor {
+        NSColor(name: nil) { appearance in NSColor(hex: isDark(appearance) ? dark : light) }
+    }
+    static func isDark(_ appearance: NSAppearance) -> Bool {
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+    static let canvas = color(light: 0xECEDEB, dark: 0x191A1C)
+    static let background = color(light: 0xFAFAF8, dark: 0x202123)
+    static let surface = color(light: 0xE4E5E1, dark: 0x303134)
+    static let floating = color(light: 0xFFFFFF, dark: 0x2D2E31)
+    static let text = color(light: 0x292C30, dark: 0xE6E6E3)
+    static let muted = color(light: 0x646966, dark: 0xAAA9A5)
+    static let accent = color(light: 0x88610D, dark: 0xE6C579)
+    static let green = color(light: 0x2C7046, dark: 0x88CCA0)
+    static let red = color(light: 0xAA3541, dark: 0xE89A9E)
+    static let added = color(light: 0xEAF3E6, dark: 0x28362E)
+    static let removed = color(light: 0xFAE8E8, dark: 0x392A30)
+    static let placeholder = color(light: 0xF0F0ED, dark: 0x25262A)
+    static let hover = overlay(light: 0.065, dark: 0.09)
+    static let selectedHover = overlay(light: 0.10, dark: 0.14)
+    static let hoveredTab = color(light: 0xD9DAD6, dark: 0x494A4C)
+    static let shadow = NSColor(name: nil) { appearance in NSColor.black.withAlphaComponent(isDark(appearance) ? 0.4 : 0.15) }
+    static let scrim = NSColor(name: nil) { appearance in NSColor.black.withAlphaComponent(isDark(appearance) ? 0.22 : 0.12) }
+
+    private static func overlay(light: CGFloat, dark: CGFloat) -> NSColor {
+        NSColor(name: nil) { appearance in
+            isDark(appearance) ? NSColor.white.withAlphaComponent(dark) : NSColor.black.withAlphaComponent(light)
+        }
+    }
+
+    // CALayer keeps a resolved CGColor, so retain its semantic source weakly by
+    // layer and resolve it again when the application's appearance changes.
+    enum LayerColor { case background, border, shadow }
+    private final class LayerColors: NSObject { var values: [LayerColor: NSColor] = [:] }
+    private static let layerColors = NSMapTable<CALayer, LayerColors>(keyOptions: .weakMemory, valueOptions: .strongMemory)
+
+    static func setLayerColor(_ color: NSColor, on layer: CALayer?, property: LayerColor = .background) {
+        guard let layer else { return }
+        let colors = layerColors.object(forKey: layer) ?? LayerColors()
+        colors.values[property] = color
+        layerColors.setObject(colors, forKey: layer)
+        let appearance = NSApp?.effectiveAppearance ?? NSAppearance(named: .aqua)!
+        appearance.performAsCurrentDrawingAppearance { apply(color.cgColor, to: layer, property: property) }
+    }
+
+    static func refreshLayerColors(using appearance: NSAppearance) {
+        appearance.performAsCurrentDrawingAppearance {
+            for case let layer as CALayer in layerColors.keyEnumerator().allObjects {
+                for (property, color) in layerColors.object(forKey: layer)?.values ?? [:] {
+                    apply(color.cgColor, to: layer, property: property)
+                }
+            }
+        }
+    }
+
+    private static func apply(_ color: CGColor, to layer: CALayer, property: LayerColor) {
+        switch property {
+        case .background: layer.backgroundColor = color
+        case .border: layer.borderColor = color
+        case .shadow: layer.shadowColor = color
+        }
+    }
 
     enum Code {
         static let fontSize: CGFloat = 12
@@ -101,7 +152,7 @@ enum Theme {
 
     static func fill(_ view: NSView, _ color: NSColor) {
         view.wantsLayer = true
-        view.layer?.backgroundColor = color.cgColor
+        setLayerColor(color, on: view.layer)
     }
 
     static func pin(_ child: NSView, to parent: NSView, inset: CGFloat = 0) {

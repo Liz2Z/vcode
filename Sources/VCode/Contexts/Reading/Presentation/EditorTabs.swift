@@ -327,8 +327,8 @@ private final class TabContent: NSView {
     func setPressed(_ value: Bool) { pressed = value; updateFeedback() }
     private func updateFeedback() {
         let selected = groupFocused ? Theme.surface : Theme.surface.withAlphaComponent(0.5)
-        let color: NSColor = pressed ? Theme.accent.withAlphaComponent(0.24) : active ? (hovered ? selected.blended(withFraction: 0.12, of: .white)! : selected) : hovered ? NSColor.white.withAlphaComponent(0.08) : .clear
-        layer?.backgroundColor = color.cgColor
+        let color: NSColor = pressed ? Theme.accent.withAlphaComponent(0.24) : active ? (hovered ? Theme.hoveredTab : selected) : hovered ? Theme.hover : .clear
+        Theme.setLayerColor(color, on: layer)
     }
 }
 

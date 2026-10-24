@@ -16,13 +16,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow!
     private var workspace: WorkspaceController!
     private let history = WorkspaceHistoryStore()
+    private let appearance = AppearanceController()
     private var windowSave: DispatchWorkItem?
     private lazy var resourceUsage = ResourceUsageWindowController()
     private var pendingExternalURLs: [URL] = []
     private var readyForDocuments = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.appearance = NSAppearance(named: .darkAqua)
+        appearance.start()
         workspace = WorkspaceController(history: history)
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1360, height: 860), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "VCode"
@@ -45,6 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         window.delegate = self
+        appearance.onError = { [weak self] message in
+            (self?.workspace.view as? WorkspaceView)?.status.message.stringValue = message
+        }
+        if let error = appearance.settings.persistenceError { appearance.onError?(error) }
         buildMenu()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -142,6 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         shortcuts.target = workspace
         view.addItem(shortcuts)
         KeyboardShortcutCatalog.register(shortcuts)
+        view.addItem(.separator())
+        appearance.addMenuItems(to: view)
         let window = submenu("Window")
         item(window, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m", includeInShortcutList: false)
         item(window, "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", flags: [.command, .control], includeInShortcutList: false)

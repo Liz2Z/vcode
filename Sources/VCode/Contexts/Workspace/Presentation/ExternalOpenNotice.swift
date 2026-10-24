@@ -65,7 +65,7 @@ final class ExternalOpenNotice: NSView {
 
     func show(_ failures: [Failure], empty: Bool) {
         guard let first = failures.first else { return }
-        layer?.backgroundColor = (empty ? Theme.background : NSColor.black.withAlphaComponent(0.22)).cgColor
+        Theme.fill(self, empty ? Theme.background : Theme.scrim)
         title.stringValue = failures.count == 1 ? "Unable to open \(first.url.lastPathComponent)" : "Unable to open \(failures.count) files"
         var reasons: [String] = []
         for failure in failures where !reasons.contains(failure.reason) { reasons.append(failure.reason) }

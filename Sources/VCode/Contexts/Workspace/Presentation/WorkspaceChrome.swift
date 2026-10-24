@@ -66,9 +66,9 @@ final class WorkspaceNavigation: NSView {
         changesIndicator.setAccessibilityElement(false)
         changesIndicator.wantsLayer = true
         if let layer = changesIndicator.layer {
-            layer.backgroundColor = Theme.accent.cgColor
+            Theme.setLayerColor(Theme.accent, on: layer)
             layer.cornerRadius = 2.5
-            layer.shadowColor = Theme.accent.cgColor
+            Theme.setLayerColor(Theme.accent, on: layer, property: .shadow)
             layer.shadowOpacity = 0.9
             layer.shadowRadius = 3.5
             layer.shadowOffset = .zero

@@ -115,7 +115,7 @@ final class InspectionPresenter: NSObject, NSWindowDelegate {
         surface.onExit = { [weak self] point in self?.hoverPointerMoved(to: point) }
         Theme.rounded(surface, radius: 8, color: Theme.background)
         surface.layer?.borderWidth = 1
-        surface.layer?.borderColor = Theme.muted.withAlphaComponent(0.24).cgColor
+        Theme.setLayerColor(Theme.muted.withAlphaComponent(0.24), on: surface.layer, property: .border)
         let scroll = NSScrollView()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true

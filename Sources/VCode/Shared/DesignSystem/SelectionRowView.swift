@@ -61,7 +61,7 @@ final class SelectionRowView: NSTableRowView {
         if isCurrent { fill(Theme.accent.withAlphaComponent(0.13)) }
         else if !isSelected {
             if isPressed { fill(Theme.accent.withAlphaComponent(0.32)) }
-            else if isHovered { fill(NSColor.white.withAlphaComponent(0.09)) }
+            else if isHovered { fill(Theme.hover) }
         }
     }
 

@@ -9,8 +9,8 @@ final class FloatingSurface: NSView {
         Theme.fill(self, Theme.floating)
         layer?.cornerRadius = radius
         layer?.masksToBounds = false
-        layer?.shadowColor = NSColor.black.cgColor
-        layer?.shadowOpacity = 0.4
+        Theme.setLayerColor(Theme.shadow, on: layer, property: .shadow)
+        layer?.shadowOpacity = 1
         layer?.shadowRadius = 18
         layer?.shadowOffset = CGSize(width: 0, height: -6)
     }

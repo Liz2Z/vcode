@@ -146,12 +146,12 @@ final class FeedbackButton: PointingHandButton {
         let fill: NSColor
         if !isEnabled { fill = .clear }
         else if pressed { fill = Theme.accent.withAlphaComponent(0.24) }
-        else if hovered { fill = NSColor.white.withAlphaComponent(isSelected ? 0.14 : 0.1) }
+        else if hovered { fill = (isSelected ? Theme.selectedHover : Theme.hover) }
         else if isSelected { fill = Theme.accent.withAlphaComponent(0.18) }
         else { fill = .clear }
-        layer?.backgroundColor = fill.cgColor
+        Theme.setLayerColor(fill, on: layer)
         layer?.borderWidth = focused && isEnabled ? 1 : 0
-        layer?.borderColor = Theme.accent.cgColor
+        Theme.setLayerColor(Theme.accent, on: layer, property: .border)
         contentTintColor = !isEnabled ? (disabledTint ?? Theme.muted.withAlphaComponent(0.7)) : (pressed || isSelected ? Theme.accent : hovered ? Theme.text : normalTint)
         icon.contentTintColor = contentTintColor
         label.textColor = contentTintColor

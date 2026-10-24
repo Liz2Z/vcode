@@ -2,15 +2,15 @@ import AppKit
 
 enum Syntax {
     // Code needs a wider palette than chrome so syntax roles remain easy to scan.
-    private static let keyword = NSColor(hex: 0xCBB0EE)
-    private static let primitive = NSColor(hex: 0x8EBEEA)
-    private static let number = NSColor(hex: 0xB7CEA0)
-    private static let type = NSColor(hex: 0x81C7BA)
-    private static let function = NSColor(hex: 0xE8D294)
-    private static let property = NSColor(hex: 0xA8C9E5)
-    private static let literal = NSColor(hex: 0xE3AF96)
-    private static let string = NSColor(hex: 0xE0B58F)
-    private static let comment = NSColor(hex: 0xB3BAB2)
+    private static let keyword = Theme.color(light: 0x7D378E, dark: 0xCBB0EE)
+    private static let primitive = Theme.color(light: 0x1B5C9B, dark: 0x8EBEEA)
+    private static let number = Theme.color(light: 0x397548, dark: 0xB7CEA0)
+    private static let type = Theme.color(light: 0x226B68, dark: 0x81C7BA)
+    private static let function = Theme.color(light: 0x805B12, dark: 0xE8D294)
+    private static let property = Theme.color(light: 0x315E8A, dark: 0xA8C9E5)
+    private static let literal = Theme.color(light: 0xA45224, dark: 0xE3AF96)
+    private static let string = Theme.color(light: 0xA34B22, dark: 0xE0B58F)
+    private static let comment = Theme.color(light: 0x636B60, dark: 0xB3BAB2)
     private static let keywords = Set("abstract as asserts async await break case catch class const continue debugger declare default delete do else enum export extends finally for from function get if implements import in infer instanceof interface is keyof let namespace new of override private protected public readonly return satisfies set static super switch this throw try type typeof unique var void while with yield".split(separator: " ").map(String.init))
     private static let primitives = Set("any bigint boolean never number object string symbol undefined unknown null true false".split(separator: " ").map(String.init))
     private static let literals: Set<String> = ["true", "false", "null", "undefined"]
