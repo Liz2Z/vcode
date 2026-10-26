@@ -127,6 +127,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             self.inspection.dismiss()
             self.syncLanguage(for: editor)
             self.refreshLanguageStatus()
+            self.refreshEditingStatus()
         }
         workspace.editorGroups.onSplitDocument = { [weak self] document, editor in
             self?.openFile(document.path, diff: document.comparison != nil, comparison: document.comparison ?? .workingTree, editor: editor)
@@ -226,11 +227,22 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
                 }
             }
         }
+        refreshEditingStatus()
         if renamedActive, let path = workspace.editor.activePath { workspace.explorer.select(path, comparison: workspace.editor.activeComparison) }
         scheduleReadingSave()
     }
 
     private func configureEditor(_ editor: EditorView) {
+        editor.onDraftActivated = { [weak self, weak editor] in
+            guard let self, let editor else { return }
+            self.workspace.editorGroups.activate(editor)
+            self.session.invalidateDocument(scope: editor.readingID)
+            self.inspectToken = UUID(); self.hoverRequest = UUID()
+            self.dismissShortcuts(); self.dismissQuickOpen(); self.picker?.close()
+            self.inspection.dismiss()
+            self.refreshLanguageStatus()
+            self.refreshEditingStatus()
+        }
         editor.onSessionChanged = { [weak self] in self?.scheduleReadingSave() }
         editor.allowsNavigation = session.state != nil && !session.isSwitching
         editor.onRestoreLocation = { [weak self, weak editor] location in
@@ -257,7 +269,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         }
         editor.onCursor = { [weak self, weak editor] position in
             guard let self, let editor, self.workspace.editor === editor else { return }
-            self.workspace.status.message.stringValue = "Ln \(position.line + 1), Col \(position.character + 1)  ·  Read Only"
+            self.workspace.status.message.stringValue = "Ln \(position.line + 1), Col \(position.character + 1)  ·  \(editor.isEditingDraft ? "Editable" : "Read Only")"
         }
         editor.right.text.onInspect = { [weak self, weak editor] index, kind in
             guard let self, let editor else { return }
@@ -298,10 +310,20 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         language.open(url: reader.root.appendingPathComponent(path), text: source, root: reader.root)
     }
 
+    private func refreshEditingStatus() {
+        guard workspace.editor.activeDocument != nil else { return }
+        workspace.status.message.stringValue = workspace.editor.isEditingDraft ? "Editable text · ⌘S to save" : "Read Only"
+    }
+
     private func refreshLanguageStatus() {
+        if workspace.editor.isEditingDraft { workspace.status.language.stringValue = "Plain Text · Editable"; return }
         guard let path = workspace.editor.activePath else { workspace.status.language.stringValue = ""; return }
         workspace.status.language.stringValue = language.supports(path) ? languageStatus : path.hasSuffix(".py") ? "Python · Text preview" : "UTF-8"
     }
+
+    @objc func newTextTab() { workspace.editor.newTextTab() }
+    @objc func saveText() { workspace.editor.saveTextAs() }
+    @objc func saveTextAs() { workspace.editor.saveTextAs(alwaysChoose: true) }
 
     @objc func openFolder() {
         dismissShortcuts()
@@ -436,6 +458,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         if state.searchableFiles.contains(path) { history.recordFile(path, in: state.root) }
         editor.prepare(path: path, diff: diff, isGit: state.isGit, comparison: comparison, restoring: location, recordNavigation: location == nil, forceSource: forceSource)
         refreshLanguageStatus()
+        if workspace.editor === editor { refreshEditingStatus() }
         loadFile(path, diff: editor.showingDiff, comparison: comparison, position: line.map { ($0, character) }, highlightDestination: highlightDestination, editor: editor)
     }
 
@@ -550,6 +573,8 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     @objc func goBack() { workspace.editor.goBack() }
     @objc func goForward() { workspace.editor.goForward() }
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(newTextTab) { return session.state != nil && !session.isSwitching }
+        if item.action == #selector(saveText) || item.action == #selector(saveTextAs) { return workspace.editor.isEditingDraft && !session.isSwitching }
         if item.action == #selector(showQuickOpen) || item.action == #selector(showProjectSearch) { return session.state != nil && !session.isSwitching }
         if item.action == #selector(goBack) { return !session.isSwitching && workspace.editor.canGoBack }
         if item.action == #selector(goForward) { return !session.isSwitching && workspace.editor.canGoForward }

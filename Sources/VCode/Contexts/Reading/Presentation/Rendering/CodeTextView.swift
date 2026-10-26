@@ -1,6 +1,13 @@
 import AppKit
 
 final class CodeTextView: NSTextView {
+    var onTextChange: (() -> Void)?
+
+    override func didChangeText() {
+        super.didChangeText()
+        onTextChange?()
+    }
+
     var onInspect: ((Int, String) -> Void)?
     var onCursor: ((Int) -> Void)?
     var onHoverInvalidated: (() -> Void)?
@@ -124,6 +131,7 @@ final class CodeTextView: NSTextView {
     }
 
     private func updateCommandHover(at point: NSPoint) {
+        guard !isEditable else { return }
         let range = visibleRect.contains(point) ? identifier(at: point) : nil
         if range == commandCandidate {
             if underlinedIdentifier != nil { NSCursor.pointingHand.set() }
@@ -150,6 +158,7 @@ final class CodeTextView: NSTextView {
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        if isEditable { return super.menu(for: event) }
         cancelInspection()
         contextIdentifier = identifier(at: convert(event.locationInWindow, from: nil))
         let menu = NSMenu()
@@ -209,11 +218,13 @@ final class CodeTextView: NSTextView {
     override func mouseMoved(with event: NSEvent) { super.mouseMoved(with: event); updateHover(event) }
 
     private func updateHover(_ event: NSEvent) {
+        guard !isEditable else { return }
         let point = convert(event.locationInWindow, from: nil)
         updatePointer(at: point, modifiers: event.modifierFlags)
     }
 
     private func updatePointer(at point: NSPoint, modifiers: NSEvent.ModifierFlags) {
+        guard !isEditable else { return }
         let wasCommandHeld = commandHeld
         commandHeld = modifiers.contains(.command)
         if commandHeld {
@@ -278,6 +289,7 @@ final class CodeTextView: NSTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if isEditable { super.mouseDown(with: event); onCursor?(selectedRange().location); return }
         cancelInspection()
         if event.modifierFlags.contains(.command) {
             if let range = identifier(at: convert(event.locationInWindow, from: nil)) {

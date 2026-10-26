@@ -123,6 +123,8 @@ final class CodePane: NSView {
     }
 
     func show(lines: [CodeLine], path: String, title: String, detail: String, showsHeader: Bool = true) {
+        text.isEditable = false
+        text.undoManager?.removeAllActions()
         text.cancelNavigationFlash()
         text.resetSymbolFeedback()
         text.cancelInspection()
@@ -142,6 +144,38 @@ final class CodePane: NSView {
         }
         gutter.needsDisplay = true
         text.needsDisplay = true
+    }
+
+    func showEditable(_ source: String, path: String) {
+        show(lines: [], path: path, title: "", detail: "", showsHeader: false)
+        text.string = source
+        text.isEditable = true
+        text.allowsUndo = true
+        updateEditableLines(path: path)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.minimumLineHeight = Theme.Code.lineHeight
+        paragraph.maximumLineHeight = Theme.Code.lineHeight
+        paragraph.defaultTabInterval = max(7, Theme.Code.font().maximumAdvancement.width) * 4
+        paragraph.tabStops = []
+        text.defaultParagraphStyle = paragraph
+        text.typingAttributes = [.font: Theme.Code.font(), .foregroundColor: Theme.text, .paragraphStyle: paragraph]
+        text.setSelectedRange(NSRange(location: 0, length: 0))
+    }
+
+    func updateEditableLines(path: String) {
+        guard text.isEditable else { return }
+        lines = text.string.components(separatedBy: "\n").enumerated().map {
+            CodeLine(number: $0.offset + 1, text: $0.element, kind: .unchanged)
+        }
+        var offset = 0
+        offsets = lines.map { line in defer { offset += (line.text as NSString).length + 1 }; return offset }
+        gutter.lines = lines
+        codeLayout.kinds = lines.map(\.kind)
+        let undo = text.undoManager
+        undo?.disableUndoRegistration()
+        if let storage = text.textStorage { Syntax.apply(to: storage, path: path, font: Theme.Code.font()) }
+        undo?.enableUndoRegistration()
+        gutter.needsDisplay = true
     }
 
     func resetScroll() {

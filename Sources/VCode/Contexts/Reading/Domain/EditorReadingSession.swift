@@ -9,7 +9,7 @@ struct EditorReadingSession: Codable, Equatable {
 
     var validated: EditorReadingSession {
         var seen = Set<ReadingDocument>()
-        let documents = documents.filter { Self.validPath($0.path) && seen.insert($0).inserted }
+        let documents = documents.filter { Self.validPath($0.path) && (!$0.isDraft || $0.comparison == nil) && seen.insert($0).inserted }
         let active = activeDocument.flatMap { documents.contains($0) ? $0 : nil } ?? documents.first
         return EditorReadingSession(documents: documents, activeDocument: active,
             positions: positions.filter { documents.contains($0.document) && Self.validPosition($0) },

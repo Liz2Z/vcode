@@ -3,7 +3,9 @@ import Foundation
 struct ReadingDocument: Codable, Hashable {
     let path: String
     let comparison: GitComparison?
-    var id: String { (comparison?.rawValue ?? "source") + "\0" + path }
+    var draftID: UUID? = nil
+    var isDraft: Bool { draftID != nil }
+    var id: String { draftID.map { "draft\0" + $0.uuidString } ?? ((comparison?.rawValue ?? "source") + "\0" + path) }
 }
 
 enum ReadingCloseScope: CaseIterable {
@@ -14,10 +16,14 @@ struct ReaderSession {
     private(set) var documents: [ReadingDocument] = []
     private(set) var activeDocument: ReadingDocument?
     var paths: [String] { documents.map(\.path) }
-    var activePath: String? { activeDocument?.path }
+    var activePath: String? { activeDocument.flatMap { $0.isDraft ? nil : $0.path } }
 
     mutating func open(_ path: String, comparison: GitComparison? = nil) {
         let document = ReadingDocument(path: path, comparison: comparison)
+        open(document)
+    }
+
+    mutating func open(_ document: ReadingDocument) {
         if !documents.contains(document) { documents.append(document) }
         activeDocument = document
     }
@@ -32,6 +38,8 @@ struct ReaderSession {
     mutating func close(_ document: ReadingDocument) -> Bool {
         remove([document])
     }
+
+    mutating func close(_ documents: [ReadingDocument]) -> Bool { remove(documents) }
 
     func documentsToClose(_ scope: ReadingCloseScope, relativeTo document: ReadingDocument) -> [ReadingDocument] {
         guard let index = documents.firstIndex(of: document) else { return [] }
@@ -81,7 +89,7 @@ struct ReaderSession {
 
     mutating func renamePaths(_ renames: [String: String]) {
         func renamed(_ document: ReadingDocument) -> ReadingDocument {
-            ReadingDocument(path: renames[document.path] ?? document.path, comparison: document.comparison)
+            document.isDraft ? document : ReadingDocument(path: renames[document.path] ?? document.path, comparison: document.comparison)
         }
         documents = documents.map(renamed).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
         activeDocument = activeDocument.map(renamed)

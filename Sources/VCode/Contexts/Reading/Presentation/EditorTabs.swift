@@ -1,6 +1,8 @@
 import AppKit
 
 final class EditorTabs: NSView, NSDraggingSource {
+    var onNewText: (() -> Void)?
+    var titleForDocument: ((ReadingDocument) -> String)?
     var onSelect: ((ReadingDocument) -> Void)?
     var onClose: ((ReadingDocument) -> Void)?
     var onCloseGroup: ((ReadingDocument, ReadingCloseScope) -> Void)?
@@ -78,6 +80,21 @@ final class EditorTabs: NSView, NSDraggingSource {
         refreshHover()
     }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        guard hit != nil else { return nil }
+        var view = hit
+        while let current = view, current !== self {
+            if current is TabContent || current is NSScroller { return hit }
+            view = current.superview
+        }
+        return self
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 { onNewText?() }
+    }
+
     private func refreshHover() {
         for case let content as TabContent in stack.arrangedSubviews {
             content.refreshHover()
@@ -104,7 +121,7 @@ final class EditorTabs: NSView, NSDraggingSource {
                 guard let self, let content else { return }
                 self.beginDrag(document, content: content, event: event)
             }
-            title.title = (path as NSString).lastPathComponent + (document.comparison == .staged ? " · Staged" : document.comparison == .unstaged ? " · Unstaged" : "")
+            title.title = (titleForDocument?(document) ?? (path as NSString).lastPathComponent) + (document.comparison == .staged ? " · Staged" : document.comparison == .unstaged ? " · Unstaged" : "")
             title.target = self; title.action = #selector(selectTab(_:))
             title.identifier = NSUserInterfaceItemIdentifier(document.id)
             title.bezelStyle = .smallSquare
@@ -121,7 +138,7 @@ final class EditorTabs: NSView, NSDraggingSource {
             title.contentTintColor = active ? (groupFocused ? Theme.accent : Theme.text) : Theme.muted
             title.setAccessibilityValue(active ? 1 : 0)
             title.imagePosition = .noImage
-            title.toolTip = path + (document.comparison.map { " · " + $0.rawValue } ?? " · Source")
+            title.toolTip = (document.isDraft ? "Editable text draft" : path) + (document.comparison.map { " · " + $0.rawValue } ?? " · Source")
             let close = Theme.button("xmark", tooltip: "Close tab", target: self, action: #selector(closeTab(_:)))
             close.feedbackRadius = 4
             close.identifier = NSUserInterfaceItemIdentifier(document.id)

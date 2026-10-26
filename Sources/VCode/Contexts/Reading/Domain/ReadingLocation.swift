@@ -89,7 +89,7 @@ struct ReadingHistory {
 
     mutating func renamePaths(_ renames: [String: String]) {
         for i in locations.indices {
-            if let path = renames[locations[i].document.path] {
+            if !locations[i].document.isDraft, let path = renames[locations[i].document.path] {
                 locations[i].document = ReadingDocument(path: path, comparison: locations[i].document.comparison)
             }
         }

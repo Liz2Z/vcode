@@ -131,7 +131,10 @@ final class EditorGroupsView: NSView, NSSplitViewDelegate {
         }
         editor.onCloseGroup = { [weak self, weak editor] in
             guard let editor else { return }
-            self?.close(editor)
+            editor.requestCloseGroup { [weak self, weak editor] in
+                guard let self, let editor, self.editors.contains(where: { $0 === editor }) else { return }
+                self.close(editor)
+            }
         }
     }
 

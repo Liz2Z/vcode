@@ -15,6 +15,15 @@ final class EditorView: NSView, NSSplitViewDelegate {
     private let split = ReadingSplitView()
     private let message = Theme.label("", size: 13, color: Theme.muted)
     private var session = ReaderSession()
+    var draftStore = TextDraftStore()
+    private var drafts: [UUID: TextDraft] = [:]
+    private var pendingDraftWrites = Set<UUID>()
+    private var draftSaveWork: DispatchWorkItem?
+    private var draftCloseSheet: DraftCloseSheet?
+    private var workspaceOpen = false
+    var activeDocument: ReadingDocument? { session.activeDocument }
+    var isEditingDraft: Bool { session.activeDocument?.isDraft == true }
+    var onDraftActivated: (() -> Void)?
     private var snapshot: FileSnapshot?
     private var renderedDiff = false
     private var needsRender = false
@@ -76,9 +85,11 @@ final class EditorView: NSView, NSSplitViewDelegate {
             split.topAnchor.constraint(equalTo: breadcrumbs.bottomAnchor, constant: 4), split.leadingAnchor.constraint(equalTo: leadingAnchor), split.trailingAnchor.constraint(equalTo: trailingAnchor), split.bottomAnchor.constraint(equalTo: bottomAnchor),
             markdown.topAnchor.constraint(equalTo: split.topAnchor), markdown.leadingAnchor.constraint(equalTo: split.leadingAnchor), markdown.trailingAnchor.constraint(equalTo: split.trailingAnchor), markdown.bottomAnchor.constraint(equalTo: split.bottomAnchor),
             message.centerXAnchor.constraint(equalTo: split.centerXAnchor), message.centerYAnchor.constraint(equalTo: split.centerYAnchor), message.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 30), message.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -30),
-            welcome.topAnchor.constraint(equalTo: topAnchor), welcome.leadingAnchor.constraint(equalTo: leadingAnchor), welcome.trailingAnchor.constraint(equalTo: trailingAnchor), welcome.bottomAnchor.constraint(equalTo: bottomAnchor)
+            welcome.topAnchor.constraint(equalTo: tabs.bottomAnchor), welcome.leadingAnchor.constraint(equalTo: leadingAnchor), welcome.trailingAnchor.constraint(equalTo: trailingAnchor), welcome.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
-        tabs.onSelect = { [weak self] document in self?.onSelectFile?(document.path, document.comparison) }
+        tabs.onSelect = { [weak self] document in self?.selectDocument(document) }
+        tabs.onNewText = { [weak self] in self?.newTextTab() }
+        tabs.titleForDocument = { [weak self] document in self?.documentTitle(document) ?? document.path }
         splitEditorButton.target = self; splitEditorButton.action = #selector(splitEditor)
         closeGroupButton.target = self; closeGroupButton.action = #selector(closeGroup)
         backButton.target = self; backButton.action = #selector(goBack)
@@ -88,8 +99,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         tabs.onClose = { [weak self] document in self?.close(document) }
         tabs.onCloseGroup = { [weak self] document, scope in
             guard let self else { return }
-            self.saveReadingPosition()
-            self.finishClosing(self.session.close(scope, relativeTo: document))
+            self.requestClose(self.session.documentsToClose(scope, relativeTo: document))
         }
         tabs.onMove = { [weak self] document, index in
             guard let self, self.session.move(document, to: index) else { return }
@@ -101,6 +111,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         breadcrumbs.previewButton.target = self; breadcrumbs.previewButton.action = #selector(showMarkdownPreview)
         left.onScroll = { [weak self] point in if self?.showingDiff == true { self?.right.sync(to: point) } }
         right.onScroll = { [weak self] point in if self?.showingDiff == true { self?.left.sync(to: point) } }
+        right.text.onTextChange = { [weak self] in self?.draftChanged() }
         right.text.onCursor = { [weak self] index in guard let self, let position = self.right.position(at: index) else { return }; self.onCursor?(position) }
         markdown.onRendered = { [weak self] in
             guard let self else { return }
@@ -111,7 +122,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     required init?(coder: NSCoder) { fatalError() }
     override var acceptsFirstResponder: Bool { true }
 
-    func setWorkspaceOpen(_ open: Bool) { welcome.show(hasWorkspace: open); splitEditorButton.isEnabled = open }
+    func setWorkspaceOpen(_ open: Bool) { workspaceOpen = open; welcome.show(hasWorkspace: open); splitEditorButton.isEnabled = open }
 
     func configureGroup(split: Bool, focused: Bool) {
         splitEditorButton.isHidden = split
@@ -213,6 +224,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     }
 
     func reset(clearHistory: Bool = true) {
+        flushDrafts()
         session.reset()
         tabs.show(session)
         snapshot = nil
@@ -232,7 +244,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         left.isHidden = true
         left.removeFromSuperview()
         split.isHidden = true
-        tabs.isHidden = true
+        tabs.isHidden = false
         breadcrumbs.isHidden = true
         welcome.isHidden = false
         message.isHidden = true
@@ -241,27 +253,169 @@ final class EditorView: NSView, NSSplitViewDelegate {
         breadcrumbs.showMarkdownControls(false, preview: false)
     }
 
+    func documentTitle(_ document: ReadingDocument) -> String {
+        guard let id = document.draftID else { return (document.path as NSString).lastPathComponent }
+        let draft = drafts[id] ?? (try? draftStore.load(id))
+        return (draft?.destination?.lastPathComponent ?? document.path) + (draft?.needsSave == true ? " •" : "")
+    }
+
+    @objc func newTextTab() {
+        guard workspaceOpen else { NSSound.beep(); return }
+        let number = (1...).first { number in !session.documents.contains { $0.path == "Untitled-\(number)" } }!
+        let document = ReadingDocument(path: "Untitled-\(number)", comparison: nil, draftID: UUID())
+        do {
+            try draftStore.save(TextDraft(), id: document.draftID!)
+            openDraft(document)
+        } catch { breadcrumbs.path.stringValue = "Could not create draft: " + error.localizedDescription }
+    }
+
+    private func selectDocument(_ document: ReadingDocument) {
+        if document.isDraft { openDraft(document) }
+        else { onSelectFile?(document.path, document.comparison) }
+    }
+
+    func openDraft(_ document: ReadingDocument, restoring: ReadingLocation? = nil, recordNavigation: Bool = true) {
+        guard let id = document.draftID else { return }
+        if recordNavigation { saveReadingPosition() }
+        session.open(document)
+        snapshot = nil
+        showingDiff = false
+        pendingArrival = true; recordArrival = recordNavigation
+        pendingRestore = restoring ?? savedPositions[document]
+        tabs.show(session)
+        welcome.isHidden = true; tabs.isHidden = false; breadcrumbs.isHidden = false
+        breadcrumbs.showCounts(nil); breadcrumbs.showMarkdownControls(false, preview: false)
+        markdown.clear(); markdown.isHidden = true
+        left.removeFromSuperview(); left.isHidden = true
+        right.showDiffOverview(nil)
+        do {
+            let draft = try drafts[id] ?? draftStore.load(id)
+            drafts[id] = draft
+            right.showEditable(draft.text, path: draft.destination?.path ?? "")
+            split.isHidden = false; message.isHidden = true
+            split.adjustSubviews(); right.resetScroll()
+            if let location = pendingRestore { right.restore(location.right) }
+            showDraftLabel()
+            completeArrival(fallback: pendingRestore)
+            onDraftActivated?()
+            window?.makeFirstResponder(right.text)
+        } catch {
+            // Do not replace an unreadable draft with an empty, writable document.
+            right.text.isEditable = false
+            showMessage("Could not read draft: " + error.localizedDescription)
+        }
+        onSessionChanged?()
+    }
+
+    private func draftChanged() {
+        guard let document = session.activeDocument, let id = document.draftID, var draft = drafts[id] else { return }
+        let wasDirty = draft.needsSave
+        draft.text = right.text.string
+        drafts[id] = draft
+        pendingDraftWrites.insert(id)
+        right.updateEditableLines(path: draft.destination?.path ?? "")
+        if wasDirty != draft.needsSave { tabs.show(session, revealActive: false) }
+        showDraftLabel()
+        draftSaveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.flushDrafts(); self?.onSessionChanged?() }
+        draftSaveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func showDraftLabel() {
+        guard let document = session.activeDocument, let id = document.draftID, let draft = drafts[id] else { return }
+        breadcrumbs.path.stringValue = (draft.destination?.path ?? document.path) + (draft.needsSave ? "  ·  Edited" : "  ·  Editable")
+    }
+
+    private func flushDrafts() {
+        draftSaveWork?.cancel(); draftSaveWork = nil
+        for id in Array(pendingDraftWrites) {
+            guard let draft = drafts[id] else { continue }
+            do { try draftStore.save(draft, id: id); pendingDraftWrites.remove(id) }
+            catch { breadcrumbs.path.stringValue = "Could not preserve draft: " + error.localizedDescription }
+        }
+    }
+
+    func saveTextAs(alwaysChoose: Bool = false, completion: ((Bool) -> Void)? = nil) {
+        guard let document = session.activeDocument, let id = document.draftID, let draft = drafts[id], let window else { completion?(false); return }
+        func save(to url: URL) {
+            do {
+                let saved = try draftStore.export(draft, to: url)
+                drafts[id] = saved
+                try draftStore.save(saved, id: id)
+                showDraftLabel(); tabs.show(session, revealActive: false)
+                right.updateEditableLines(path: url.path)
+                onSessionChanged?()
+                completion?(true)
+            } catch {
+                breadcrumbs.path.stringValue = "Could not save: " + error.localizedDescription
+                completion?(false)
+            }
+        }
+        if !alwaysChoose, let destination = draft.destination { save(to: destination); return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = draft.destination?.lastPathComponent ?? document.path + ".txt"
+        panel.canCreateDirectories = true
+        panel.beginSheetModal(for: window) { result in
+            if result == .OK, let url = panel.url { save(to: url) }
+            else { completion?(false) }
+        }
+    }
+
+    func requestClose(_ documents: [ReadingDocument], completion: (() -> Void)? = nil) {
+        guard draftCloseSheet == nil else { return }
+        saveReadingPosition()
+        func confirm(_ index: Int) {
+            guard index < documents.count else {
+                finishClosing(session.close(documents))
+                completion?()
+                return
+            }
+            let document = documents[index]
+            guard let id = document.draftID, (drafts[id] ?? (try? draftStore.load(id)))?.needsSave == true, let window else { confirm(index + 1); return }
+            // Switch to the exact draft the close operation is asking about.
+            openDraft(document)
+            let sheet = DraftCloseSheet(title: documentTitle(document)) { [weak self] choice in
+                guard let self else { return }
+                self.draftCloseSheet = nil
+                switch choice {
+                case .cancel: break
+                case .discard: confirm(index + 1)
+                case .save: self.saveTextAs { saved in if saved { confirm(index + 1) } }
+                }
+            }
+            draftCloseSheet = sheet
+            window.beginSheet(sheet)
+        }
+        confirm(0)
+    }
+
+    func requestCloseGroup(completion: @escaping () -> Void) {
+        requestClose(session.documents, completion: completion)
+    }
+
     @discardableResult
     func closeActiveTab() -> Bool {
         guard let document = session.activeDocument else { return false }
         close(document)
         return true
     }
-    private func close(_ document: ReadingDocument) {
-        saveReadingPosition()
-        finishClosing(session.close(document))
-    }
+    private func close(_ document: ReadingDocument) { requestClose([document]) }
     private func finishClosing(_ wasActive: Bool) {
         onSessionChanged?()
         tabs.show(session)
         guard wasActive else { return }
         snapshot = nil
-        if let next = session.activeDocument { onSelectFile?(next.path, next.comparison) }
+        if let next = session.activeDocument { selectDocument(next) }
         else { reset(clearHistory: false); onLastTabClosed?() }
     }
 
     func readingLocation() -> ReadingLocation? {
         guard let document = session.activeDocument else { return nil }
+        if document.isDraft {
+            guard right.text.isEditable else { return savedPositions[document] }
+            return ReadingLocation(document: document, right: right.readingPosition(), left: left.readingPosition(), markdown: nil, preview: false)
+        }
         guard let snapshot, snapshot.path == document.path,
               snapshot.comparison == document.comparison else { return nil }
         if snapshot.message != nil { return savedPositions[document] }
@@ -270,6 +424,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     }
 
     private func saveReadingPosition() {
+        flushDrafts()
         guard let location = readingLocation() else { return }
         savedPositions[location.document] = location
         if pendingArrival && recordArrival { readingHistory.visit(location) }
@@ -290,6 +445,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     }
 
     func captureSession() -> EditorReadingSession {
+        flushDrafts()
         var positions = savedPositions
         // An app exit can arrive before the active document's asynchronous render.
         // Keep its saved anchor instead of capturing the temporary loading view.
@@ -305,6 +461,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         for location in saved.positions { savedPositions[location.document] = location }
         markdownSourcePaths = Set(saved.markdownSourcePaths)
         tabs.show(session)
+        if let document = session.activeDocument, document.isDraft { openDraft(document, recordNavigation: false) }
     }
 
     private func updateNavigationButtons() {
@@ -320,7 +477,8 @@ final class EditorView: NSView, NSSplitViewDelegate {
         if let current { savedPositions[current.document] = current }
         guard let location = readingHistory.move(forward: forward, current: current) else { return }
         updateNavigationButtons()
-        onRestoreLocation?(location)
+        if location.document.isDraft { openDraft(location.document, restoring: location, recordNavigation: false) }
+        else { onRestoreLocation?(location) }
     }
 
     func renamePaths(_ renames: [String: String]) {
@@ -330,7 +488,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         readingHistory.renamePaths(renames)
         var positions: [ReadingDocument: ReadingLocation] = [:]
         for var location in savedPositions.values {
-            location.document = ReadingDocument(path: renames[location.document.path] ?? location.document.path, comparison: location.document.comparison)
+            location.document = location.document.isDraft ? location.document : ReadingDocument(path: renames[location.document.path] ?? location.document.path, comparison: location.document.comparison)
             positions[location.document] = location
         }
         savedPositions = positions
@@ -340,7 +498,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
             needsRender = true
         }
         if var location = pendingRestore {
-            location.document = ReadingDocument(path: renames[location.document.path] ?? location.document.path, comparison: location.document.comparison)
+            location.document = location.document.isDraft ? location.document : ReadingDocument(path: renames[location.document.path] ?? location.document.path, comparison: location.document.comparison)
             pendingRestore = location
         }
         tabs.show(session)
