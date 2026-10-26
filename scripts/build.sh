@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/toolchain.sh
+vcode_select_xcode
+vcode_verify_xcode
 bash scripts/prepare-ripgrep.sh
 
 bash scripts/prepare-typescript.sh

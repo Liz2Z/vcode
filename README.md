@@ -32,3 +32,11 @@
 | 查阅快捷键 | ⌘K，然后 ⌘S |
 
 预览版尚未完成 Developer ID 签名与公证，首次打开可能需要在 macOS“隐私与安全性”中确认。
+
+## 开发检查
+
+本地与 GitHub Actions 统一执行 `bash scripts/check.sh`：准备锁定的依赖、隔离应用状态并运行完整自动化测试。日志、环境信息与退出状态保存在 `.build/check-results/`；CI 将同样的报告作为测试日志产物上传。自动化检查与实际窗口验收分别执行。
+
+工具链基线在 `.ci/toolchain.env`：Xcode 26.2（17C52）、Swift 6.2.3、macOS SDK 26.2、arm64 Node.js 22.22.2 / npm 10.9.7。检查和构建均只在当前进程选择匹配的 Xcode，不修改系统 `xcode-select`；缺少版本时明确失败，不回退到默认版本。更新基线时同步验证本地和 CI。
+
+GitHub 托管 runner 的 macOS 与显示缩放仍可能不同于本机；锁定编译器和 SDK 不会锁定系统 AppKit、字体或运行速度。实际系统版本会写入环境报告。
