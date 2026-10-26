@@ -62,7 +62,7 @@ final class IgnoredFileBrowsingTests: XCTestCase {
                 let item = try node(tree, path)
                 let row = tree.outline.row(forItem: item)
                 let cell = try XCTUnwrap(tree.outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? FileCell)
-                let expected = state.isGitIgnored(path) ? Theme.muted : Theme.text
+                let expected = state.isGitIgnored(path) ? Theme.GitStatus.ignored : Theme.text
                 XCTAssertEqual(cell.label.attributedStringValue.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, expected, path)
                 cell.setRowHovered(true)
                 tree.outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
@@ -85,7 +85,7 @@ final class IgnoredFileBrowsingTests: XCTestCase {
             for path in ["secret.env", "main.ts"] {
                 let row = tree.outline.row(forItem: try node(tree, path))
                 let cell = try XCTUnwrap(tree.outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? FileCell)
-                XCTAssertEqual(cell.label.textColor, ignored.contains(path) ? Theme.muted : Theme.text)
+                XCTAssertEqual(cell.label.textColor, ignored.contains(path) ? Theme.GitStatus.ignored : Theme.text)
             }
         }
         tree.show(WorkspaceState(root: root, files: ["secret.env"], git: GitStatus(root: root, branch: "main", changes: [GitChange(path: "secret.env", kind: .modified, comparison: .unstaged)], hasHead: true), ignoredPaths: ["secret.env"]), changesOnly: true)

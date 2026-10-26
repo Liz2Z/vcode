@@ -18,6 +18,7 @@ enum Theme {
     static let green = color(light: 0x2C7046, dark: 0x88CCA0)
     static let red = color(light: 0xAA3541, dark: 0xE89A9E)
     enum GitStatus {
+        static let ignored = color(light: 0xA0A0A0, dark: 0x666666)
         static let modified = color(light: 0x9D4500, dark: 0xFFBE3B)
         static let added = color(light: 0x006F2D, dark: 0x50D982)
         static let deleted = color(light: 0xB91F35, dark: 0xFF6978)

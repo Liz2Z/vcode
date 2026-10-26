@@ -419,7 +419,7 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         let deleted = changesOnly && !node.directory && kind == .deleted
         let ignored = !changesOnly && state?.isGitIgnored(node.path) == true
         cell.label.font = .systemFont(ofSize: node.isSection ? 11 : 13, weight: node.isSection ? .semibold : .regular)
-        cell.label.textColor = node.isSection || deleted || ignored ? Theme.muted : Theme.text
+        cell.label.textColor = ignored ? Theme.GitStatus.ignored : node.isSection || deleted ? Theme.muted : Theme.text
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingMiddle
         cell.label.attributedStringValue = NSAttributedString(string: node.name, attributes: [
