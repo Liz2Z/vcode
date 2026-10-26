@@ -4,12 +4,11 @@ import AppKit
 final class RecentWorkspaceHover {
     private(set) var panel: NSPanel?
     private var pending: DispatchWorkItem?
-    private var closing: DispatchWorkItem?
     private var observers: [NSObjectProtocol] = []
     private var monitor: Any?
 
     func schedule(_ entry: RecentWorkspace, current: Bool, available: Bool, beside anchor: NSView, onShow: @escaping () -> Void) {
-        pending?.cancel(); closing?.cancel()
+        pending?.cancel()
         let work = DispatchWorkItem { [weak self, weak anchor] in
             guard let self, let anchor, anchor.window != nil, !anchor.visibleRect.isEmpty else { return }
             onShow()
@@ -20,15 +19,11 @@ final class RecentWorkspaceHover {
     }
 
     func leave() {
-        pending?.cancel(); pending = nil
-        guard panel != nil, closing == nil else { return }
-        let work = DispatchWorkItem { [weak self] in self?.dismiss() }
-        closing = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
+        dismiss()
     }
 
     func dismiss() {
-        pending?.cancel(); pending = nil; closing?.cancel(); closing = nil
+        pending?.cancel(); pending = nil
         if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
         observers.forEach(NotificationCenter.default.removeObserver); observers.removeAll()
         if let panel { panel.parent?.removeChildWindow(panel); panel.orderOut(nil) }
@@ -41,7 +36,7 @@ final class RecentWorkspaceHover {
         let bounds = window.convertToScreen(window.contentLayoutRect).intersection(window.screen?.visibleFrame ?? window.frame).insetBy(dx: 10, dy: 10)
         guard bounds.width > 100, bounds.height > 100 else { return }
         let width = min(340, bounds.width)
-        let surface = RecentDetailSurface(frame: NSRect(x: 0, y: 0, width: width, height: 160))
+        let surface = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 160))
         let card = FloatingSurface()
         let name = Theme.label(entry.root.lastPathComponent, size: 14, color: Theme.text, weight: .semibold)
         let metadata = Theme.label((entry.projectName == entry.root.lastPathComponent ? "" : entry.projectName + "  ·  ") + (entry.branch ?? "Folder"), size: 11, color: Theme.accent)
@@ -70,8 +65,6 @@ final class RecentWorkspaceHover {
         panel.hasShadow = true; panel.hidesOnDeactivate = true; panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = true; panel.collectionBehavior = [.fullScreenAuxiliary, .transient]
         panel.setAccessibilityLabel("Recent workspace details")
-        surface.onEnter = { [weak self] in self?.closing?.cancel(); self?.closing = nil }
-        surface.onExit = { [weak self] in self?.leave() }
         window.addChildWindow(panel, ordered: .above)
         self.panel = panel; panel.orderFront(nil); surface.layoutSubtreeIfNeeded()
         for name in [NSWindow.didResizeNotification, NSWindow.didMoveNotification, NSWindow.willCloseNotification] {
@@ -85,18 +78,4 @@ final class RecentWorkspaceHover {
     }
 
     deinit { dismiss() }
-}
-
-private final class RecentDetailSurface: NSView {
-    var onEnter: (() -> Void)?
-    var onExit: (() -> Void)?
-    private var tracking: NSTrackingArea?
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
-        addTrackingArea(area); tracking = area
-    }
-    override func mouseEntered(with event: NSEvent) { onEnter?() }
-    override func mouseExited(with event: NSEvent) { onExit?() }
 }

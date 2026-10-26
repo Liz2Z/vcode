@@ -212,6 +212,18 @@ final class WorkspaceHistoryTests: XCTestCase {
             XCTAssertTrue(fields.contains { $0.stringValue == "Current workspace" })
             XCTAssertTrue(fields.allSatisfy { panel.contentView!.bounds.contains($0.convert($0.bounds, to: panel.contentView)) })
         }
+        let shownPanel = try XCTUnwrap(hover.panel)
+        hover.leave()
+        XCTAssertNil(hover.panel, "Leaving a Recent row must synchronously dismiss its informational card")
+        XCTAssertNil(shownPanel.parent)
+        XCTAssertFalse(shownPanel.isVisible)
+        let delayedShow = expectation(description: "Leaving before the show delay must cancel the card")
+        delayedShow.isInverted = true
+        hover.schedule(entry, current: true, available: true, beside: anchor) { delayedShow.fulfill() }
+        hover.leave()
+        wait(for: [delayedShow], timeout: 0.6)
+        XCTAssertNil(hover.panel)
+        hover.show(entry, current: true, available: true, beside: anchor)
         NotificationCenter.default.post(name: NSWindow.didResizeNotification, object: window)
         XCTAssertNil(hover.panel)
     }
