@@ -11,7 +11,7 @@ final class LanguageService {
     private var activeDocument: (url: URL, text: String, root: URL)?
     private var lastRecoveryAttempt = Date.distantPast
 
-    init(resources: URL? = Bundle.main.resourceURL) {
+    init(resources: URL? = nil) {
         connection = LanguageServerConnection(resources: resources)
         connection.onStatus = { [weak self] text in self?.onStatus?(text) }
         connection.onFailure = { [weak self] error in

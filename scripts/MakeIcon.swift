@@ -8,7 +8,13 @@ guard CommandLine.arguments.count == 2 else {
 // Package the approved artwork directly so rebuilding cannot restore the old
 // icon or diverge from the design assets. No rendering tools are needed.
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-let source = root.appendingPathComponent("Resources/Brand/AppIcon.icns")
+let flavor = ProcessInfo.processInfo.environment["VCODE_BUILD_FLAVOR"] ?? "preview"
+guard ["preview", "release"].contains(flavor) else {
+    fputs("VCODE_BUILD_FLAVOR must be preview or release.\n", stderr)
+    exit(2)
+}
+let artwork = flavor == "preview" ? "Resources/Brand/Lightsaber/AppIcon-preview-padded.icns" : "Resources/Brand/AppIcon.icns"
+let source = root.appendingPathComponent(artwork)
 let data = try Data(contentsOf: source)
 guard data.starts(with: Data("icns".utf8)), NSImage(data: data) != nil else {
     throw CocoaError(.fileReadCorruptFile, userInfo: [NSFilePathErrorKey: source.path])

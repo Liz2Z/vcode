@@ -13,17 +13,18 @@ if [[ ! -d "$app" ]]; then
     exit 1
 fi
 
-# Check both native executables so an Intel Node cannot enter an arm64 package.
-for executable in "$app/Contents/MacOS/VCode" "$app/Contents/Resources/Runtime/node" "$app/Contents/Resources/Runtime/rg"; do
+# Check every bundled executable so Intel binaries cannot enter an arm64 package.
+for executable in "$app/Contents/MacOS/VCode" "$app/Contents/Resources/TypeScript/tsc" "$app/Contents/Resources/Runtime/rg"; do
     if [[ "$(/usr/bin/lipo -archs "$executable")" != arm64 ]]; then
         echo "Expected an arm64 executable: $executable" >&2
         exit 1
     fi
 done
-test "$("$app/Contents/Resources/Runtime/node" -p 'process.arch')" = arm64
+"$app/Contents/Resources/TypeScript/tsc" --version
 "$app/Contents/Resources/Runtime/rg" --version
-test -f "$app/Contents/Resources/TypeScript/node_modules/typescript-language-server/lib/cli.mjs"
-test -f "$app/Contents/Resources/TypeScript/node_modules/typescript/lib/tsserver.js"
+test -f "$app/Contents/Resources/TypeScript/lib.d.ts"
+test ! -e "$app/Contents/Resources/Runtime/node"
+test ! -d "$app/Contents/Resources/TypeScript/node_modules"
 test -d "$app/Contents/Frameworks/Sparkle.framework"
 test -x "$app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
 /usr/bin/otool -L "$app/Contents/MacOS/VCode" | /usr/bin/grep -q '@rpath/Sparkle.framework/'

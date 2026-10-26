@@ -1,0 +1,2 @@
+Built-in image_gen edit; transparent_background=true.
+Edit target: AppIcon-photoreal-v2.png. Change only framing and transparent padding. Keep the entire dark rounded-square artwork as one unit: left-blue/right-red lightsabers, short metal hilts, V composition, lighting, texture and rounded corners. Center the complete tile at about 74% of the canvas width and height, about 13% transparent margin per side. Scale tile and swords together. No crop, new objects, labels, second tile, outside shadow, or colored/checkerboard margin. Square PNG with real alpha.

@@ -5,12 +5,11 @@ final class LanguageServerConnection {
     var onReady: (() -> Void)?
     var onFailure: ((Error) -> Void)?
     private let resources: URL
-    // A ceiling, not an allocation: real projects can exceed 512 MB while loading.
-    private let memoryLimitMB = 2048
     private var diagnosticTail = ""
     private var heapExhausted = false
     private(set) var failureReason: String?
-    private let serverPath = "TypeScript/node_modules/typescript-language-server/lib/cli.mjs"
+    private let serverPath = "TypeScript/tsc"
+    private let allowsDevelopmentFallback: Bool
     private var process: Process?
     private var input: FileHandle?
     private var output: FileHandle?
@@ -24,8 +23,9 @@ final class LanguageServerConnection {
     private(set) var ready = false
     var isRunning: Bool { process?.isRunning == true }
 
-    init(resources: URL? = Bundle.main.resourceURL) {
-        self.resources = resources ?? URL(fileURLWithPath: "")
+    init(resources: URL? = nil) {
+        self.resources = resources ?? Bundle.main.resourceURL ?? URL(fileURLWithPath: "")
+        allowsDevelopmentFallback = resources == nil && Bundle.main.bundleURL.pathExtension != "app"
     }
 
     func stop() {
@@ -70,7 +70,7 @@ final class LanguageServerConnection {
     private func recordDiagnostic(_ text: String) {
         diagnosticTail = String((diagnosticTail + text + "\n").suffix(8192))
         let lower = text.lowercased()
-        if lower.contains("heap out of memory") || lower.contains("heap limit") || lower.contains("allocation failed") {
+        if lower.contains("out of memory") || lower.contains("heap limit") || lower.contains("allocation failed") {
             heapExhausted = true
         }
     }
@@ -78,29 +78,20 @@ final class LanguageServerConnection {
     func start(root: URL) {
         stop()
         self.root = root
-        var script = resources.appendingPathComponent(serverPath)
-        if !FileManager.default.fileExists(atPath: script.path) {
+        var executable = resources.appendingPathComponent(serverPath)
+        if allowsDevelopmentFallback && !FileManager.default.isExecutableFile(atPath: executable.path) {
             let sourceRoot = String(#filePath.prefix(through: #filePath.range(of: "/Sources/")!.lowerBound))
-            script = URL(fileURLWithPath: sourceRoot).appendingPathComponent("Tools").appendingPathComponent(serverPath)
+            executable = URL(fileURLWithPath: sourceRoot).appendingPathComponent(".build/typescript-runtime").appendingPathComponent(serverPath)
         }
-        let candidates = [
-            resources.appendingPathComponent("Runtime/node").path,
-            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".volta/bin/node").path,
-            "/opt/homebrew/bin/node", "/usr/local/bin/node"
-        ]
-        guard let node = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }),
-              FileManager.default.fileExists(atPath: script.path) else {
-            fail("TypeScript runtime or language server is missing from the application.", status: "TypeScript · Setup needed")
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            fail("The native TypeScript language service is missing from the application.", status: "TypeScript · Setup needed")
             return
         }
         onStatus?("TypeScript · Starting…")
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: node)
-        process.arguments = ["--max-old-space-size=256", script.path, "--stdio", "--log-level", "1"]
+        process.executableURL = executable
+        process.arguments = ["--lsp", "--stdio"]
         process.currentDirectoryURL = root
-        var environment = ProcessInfo.processInfo.environment
-        environment["PATH"] = URL(fileURLWithPath: node).deletingLastPathComponent().path + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-        process.environment = environment
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         process.standardInput = stdin
         process.standardOutput = stdout
@@ -143,7 +134,7 @@ final class LanguageServerConnection {
                 DispatchQueue.main.async {
                     guard let self, self.generation == token else { return }
                     if self.heapExhausted {
-                        self.fail("TypeScript ran out of memory (heap limit: \(self.memoryLimitMB) MB).", status: "TypeScript · Out of memory")
+                        self.fail("The native TypeScript language service ran out of memory.", status: "TypeScript · Out of memory")
                     } else {
                         let detail = self.diagnosticTail.components(separatedBy: .newlines).first { $0.hasPrefix("Error:") }
                         let reason = detail.map { "TypeScript stopped: " + String($0.prefix(240)) } ?? "TypeScript stopped unexpectedly (exit code: \(code))."
@@ -160,7 +151,7 @@ final class LanguageServerConnection {
                 "rootUri": root.absoluteString,
                 "workspaceFolders": [["uri": root.absoluteString, "name": root.lastPathComponent]],
                 "capabilities": ["general": ["positionEncodings": ["utf-16"]], "workspace": ["configuration": true, "workspaceFolders": true], "textDocument": ["hover": ["contentFormat": ["markdown", "plaintext"]], "definition": ["linkSupport": true], "synchronization": ["dynamicRegistration": false]]],
-                "initializationOptions": ["hostInfo": "vcode", "disableAutomaticTypingAcquisition": true, "maxTsServerMemory": memoryLimitMB, "tsserver": ["useSyntaxServer": "never", "path": script.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("typescript/lib/tsserver.js").path]]
+                "initializationOptions": [String: Any]()
             ]) { [weak self] result in
                 guard let self, self.generation == token else { return }
                 switch result {
@@ -188,15 +179,14 @@ final class LanguageServerConnection {
 
     func inspect(location: CodeLocation, kind: InspectionKind, completion: @escaping (Result<LanguageInspection, Error>) -> Void) {
         var params: [String: Any] = ["textDocument": ["uri": location.url.absoluteString], "position": ["line": location.line, "character": location.character]]
-        if kind == .references { params["context"] = ["includeDeclaration": false] }
+        if kind == .references { params["context"] = ["includeDeclaration": true] }
         request("textDocument/" + kind.rawValue, params) { [weak self] result in
             let decoded = result.flatMap { value in Result { try LSPInspectionMapper.decode(value, kind: kind) } }
             guard kind == .references, case .success(.locations(let references)) = decoded, !references.isEmpty else { completion(decoded); return }
             guard let self else { completion(.failure(LanguageServiceError.connection("Language service stopped."))); return }
-            // The TS server may mark an import alias as the definition while
-            // returning its original declaration as an ordinary reference.
-            // Resolve the actual target as well, so includeDeclaration:false
-            // has the same meaning when queried from a declaration or a use.
+            // Native TypeScript treats an import alias as a declaration too.
+            // Keep those import usages, then exclude the actual definition using
+            // semantic locations, so the list retains its existing meaning.
             self.inspect(location: location, kind: .definition) { result in
                 completion(result.map { value in
                     guard case .locations(let definitions) = value else { return .locations(references) }

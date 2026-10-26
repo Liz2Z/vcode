@@ -2,7 +2,7 @@ import XCTest
 @testable import VCode
 
 final class LanguageServiceLifecycleTests: XCTestCase {
-    func testInspectionWaitsForInitializationAndUsesProjectMemoryLimit() throws {
+    func testInspectionWaitsForNativeInitializationAndOpensDocument() throws {
         let fixture = try Fixture(mode: "delayed")
         defer { fixture.remove() }
         let service = LanguageService(resources: fixture.resources)
@@ -14,8 +14,10 @@ final class LanguageServiceLifecycleTests: XCTestCase {
             inspected.fulfill()
         }
         wait(for: [inspected], timeout: 5)
-        let options = try String(contentsOf: fixture.root.appendingPathComponent("memory-limit"), encoding: .utf8)
-        XCTAssertEqual(options, "2048")
+        let arguments = try String(contentsOf: fixture.root.appendingPathComponent("arguments"), encoding: .utf8)
+        XCTAssertEqual(arguments, "--lsp --stdio")
+        let options = try String(contentsOf: fixture.root.appendingPathComponent("options"), encoding: .utf8)
+        XCTAssertEqual(options, "{}", "Do not send Node / tsserver-only settings to the native LSP")
     }
 
     func testInitializationCrashFailsWaitingInspectionWithMemoryReason() throws {
@@ -74,6 +76,21 @@ final class LanguageServiceLifecycleTests: XCTestCase {
         wait(for: [cancelled, ready], timeout: 0.8)
     }
 
+    func testMissingNativeBinaryReportsSetupInsteadOfUsingLocalNode() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vcode-native-missing-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = LanguageService(resources: root)
+        defer { service.stop() }
+        let failure = expectation(description: "Missing native binary is visible")
+        service.onFailure = { reason in
+            XCTAssertTrue(reason.contains("native TypeScript"), reason)
+            failure.fulfill()
+        }
+        service.open(url: root.appendingPathComponent("main.ts"), text: "export {};", root: root)
+        wait(for: [failure], timeout: 2)
+    }
+
     private func assertHover(_ result: Result<LanguageInspection, Error>, contains expected: String) {
         switch result {
         case .success(.hover(let text)): XCTAssertTrue(text.contains(expected), text)
@@ -91,65 +108,51 @@ final class LanguageServiceLifecycleTests: XCTestCase {
             root = FileManager.default.temporaryDirectory.appendingPathComponent("vcode-lsp-lifecycle-" + UUID().uuidString)
             resources = root.appendingPathComponent("resources")
             file = root.appendingPathComponent("main.ts")
-            let server = resources.appendingPathComponent("TypeScript/node_modules/typescript-language-server/lib/cli.mjs")
-            let runtime = resources.appendingPathComponent("Runtime/node")
+            let server = resources.appendingPathComponent("TypeScript/tsc")
             try FileManager.default.createDirectory(at: server.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: runtime.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let candidates = [
-                ProcessInfo.processInfo.environment["VCODE_LSP_RESOURCES"].map { $0 + "/Runtime/node" } ?? "",
-                URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("dist/VCode.app/Contents/Resources/Runtime/node").path,
-                "/opt/homebrew/bin/node", "/usr/local/bin/node"
-            ]
-            guard let node = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-                throw XCTSkip("Node runtime is required for LSP lifecycle tests")
-            }
-            try FileManager.default.createSymbolicLink(atPath: runtime.path, withDestinationPath: node)
             try "export const value = 42;".write(to: file, atomically: true, encoding: .utf8)
-            let script = "const mode = '\(mode)';\n" + #"""
-            import fs from 'node:fs';
-            const marker = 'started-once';
-            const first = !fs.existsSync(marker);
-            fs.writeFileSync(marker, 'yes');
-            let buffer = Buffer.alloc(0);
-            let opened = false;
-            function send(message) {
-                const body = JSON.stringify({jsonrpc: '2.0', ...message});
-                process.stdout.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
-            }
-            function receive(message) {
-                if (message.method === 'exit') process.exit(0);
-                if (message.method === 'initialize') {
-                    fs.writeFileSync('memory-limit', String(message.params.initializationOptions.maxTsServerMemory));
-                    if (mode === 'crash') {
-                        process.stderr.write('FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\n');
-                        setTimeout(() => process.exit(1), 100);
-                    } else {
-                        setTimeout(() => send({id: message.id, result: {capabilities: {}}}), mode === 'delayed' ? 200 : 0);
-                    }
-                }
-                if (message.method === 'initialized' && mode === 'recover' && first) {
-                    setTimeout(() => process.exit(1), 100);
-                }
-                if (message.method === 'textDocument/didOpen') opened = true;
-                if (message.method === 'textDocument/hover') {
-                    if (opened) send({id: message.id, result: {contents: 'const value: number'}});
-                    else send({id: message.id, error: {message: 'Document was not opened'}});
-                }
-            }
-            process.stdin.on('data', data => {
-                buffer = Buffer.concat([buffer, data]);
-                while (true) {
-                    const end = buffer.indexOf('\r\n\r\n');
-                    if (end < 0) break;
-                    const length = Number(/Content-Length: (\d+)/i.exec(buffer.subarray(0, end).toString())[1]);
-                    if (buffer.length < end + 4 + length) break;
-                    const message = JSON.parse(buffer.subarray(end + 4, end + 4 + length).toString());
-                    buffer = buffer.subarray(end + 4 + length);
-                    receive(message);
-                }
-            });
+            // The fixture emulates a stdio executable, without requiring Node.
+            let script = "#!/usr/bin/python3\nmode = '\(mode)'\n" + #"""
+            import json, sys, pathlib, time
+            marker = pathlib.Path('started-once')
+            first = not marker.exists()
+            marker.write_text('yes')
+            pathlib.Path('arguments').write_text(' '.join(sys.argv[1:]))
+            opened = False
+            def send(message):
+                body = json.dumps({'jsonrpc': '2.0', **message}).encode()
+                sys.stdout.buffer.write(('Content-Length: %d\r\n\r\n' % len(body)).encode() + body)
+                sys.stdout.buffer.flush()
+            while True:
+                headers = {}
+                while True:
+                    line = sys.stdin.buffer.readline()
+                    if not line: sys.exit(0)
+                    if line == b'\r\n': break
+                    name, value = line.decode().split(':', 1)
+                    headers[name.lower()] = value.strip()
+                message = json.loads(sys.stdin.buffer.read(int(headers['content-length'])))
+                method = message.get('method')
+                if method == 'exit': sys.exit(0)
+                if method == 'initialize':
+                    pathlib.Path('options').write_text(json.dumps(message['params']['initializationOptions']))
+                    if mode == 'crash':
+                        sys.stderr.write('fatal error: runtime: out of memory\n')
+                        sys.stderr.flush()
+                        time.sleep(0.1)
+                        sys.exit(1)
+                    if mode == 'delayed': time.sleep(0.2)
+                    send({'id': message['id'], 'result': {'capabilities': {}}})
+                if method == 'initialized' and mode == 'recover' and first:
+                    time.sleep(0.1)
+                    sys.exit(1)
+                if method == 'textDocument/didOpen': opened = True
+                if method == 'textDocument/hover':
+                    send({'id': message['id'], 'result': {'contents': 'const value: number'}} if opened
+                         else {'id': message['id'], 'error': {'message': 'Document was not opened'}})
             """#
             try script.write(to: server, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: server.path)
         }
 
         func remove() { try? FileManager.default.removeItem(at: root) }

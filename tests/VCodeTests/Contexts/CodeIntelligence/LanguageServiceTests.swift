@@ -120,6 +120,33 @@ final class LanguageServiceTests: XCTestCase {
         XCTAssertEqual(payload.line, 0)
     }
 
+    func testNativeStandardLibraryHoverAndDefinitionWithoutNode() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("vcode-native-libs-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("main.ts")
+        let source = "export const result = [1, 2].map(value => value.toFixed(2));\n"
+        try source.write(to: file, atomically: true, encoding: .utf8)
+        let resources = ProcessInfo.processInfo.environment["VCODE_LSP_RESOURCES"].map { URL(fileURLWithPath: $0) }
+        let service = LanguageService(resources: resources)
+        defer { service.stop() }
+        service.open(url: file, text: source, root: folder)
+        let hover = expectation(description: "Standard Array.map returns string[]")
+        service.inspect(url: file, line: 0, character: 15, kind: .hover) { result in
+            guard case .success(.hover(let text)) = result else { XCTFail("Expected library-backed type: \(result)"); hover.fulfill(); return }
+            XCTAssertTrue(text.contains("string[]"), text)
+            hover.fulfill()
+        }
+        wait(for: [hover], timeout: 25)
+        let definition = expectation(description: "Array.map resolves into bundled standard declarations")
+        service.inspect(url: file, line: 0, character: 29, kind: .definition) { result in
+            guard case .success(.locations(let locations)) = result else { XCTFail("Expected native standard-library definition: \(result)"); definition.fulfill(); return }
+            XCTAssertTrue(locations.contains { $0.url.lastPathComponent == "lib.es5.d.ts" }, "\(locations)")
+            definition.fulfill()
+        }
+        wait(for: [definition], timeout: 25)
+    }
+
     func testRealTypeScriptHoverDefinitionReferencesAndDocumentRefresh() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("vcode-lsp-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

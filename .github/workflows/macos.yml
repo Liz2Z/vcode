@@ -51,10 +51,8 @@ jobs:
       - name: Install language service
         run: |
           npm ci --prefix Tools/TypeScript --ignore-scripts --registry=https://registry.npmjs.org --no-audit --no-fund
-          mkdir -p .build/ci-lsp-resources/Runtime
-          ln -s "$(node -p 'process.execPath')" .build/ci-lsp-resources/Runtime/node
-          ln -s "$PWD/Tools/TypeScript" .build/ci-lsp-resources/TypeScript
-          printf 'VCODE_LSP_RESOURCES=%s/.build/ci-lsp-resources\n' "$PWD" >> "$GITHUB_ENV"
+          bash scripts/prepare-typescript.sh
+          printf 'VCODE_LSP_RESOURCES=%s/.build/typescript-runtime\n' "$PWD" >> "$GITHUB_ENV"
 
       - name: Run automated tests
         run: |
@@ -64,7 +62,7 @@ jobs:
           /usr/bin/swift test 2>&1 | tee .build/ci-results/swift-test.log
 
       - name: Build app
-        run: VCODE_BUILD_VERSION="1000.$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT" bash scripts/build.sh
+        run: VCODE_BUILD_FLAVOR=preview VCODE_BUILD_VERSION="1000.$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT" bash scripts/build.sh
 
       - name: Package and verify arm64 app
         run: bash scripts/package-macos.sh
@@ -141,7 +139,7 @@ jobs:
           Build: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
 
           Download the DMG and drag VCode into Applications, or extract the ZIP.
-          The app includes arm64 Node.js, the TypeScript language service, and ripgrep.
+          The app includes the arm64 native TypeScript language service and ripgrep; Node.js is not required at runtime.
           Automatic update checks use a signed Sparkle feed hosted on GitHub.
           This preview uses ad-hoc signing and is not notarized by Apple.
           EOF

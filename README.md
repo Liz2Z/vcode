@@ -19,7 +19,7 @@ VCode 是只读查看器。
 
 从 [Releases](https://github.com/Liz2Z/vcode/releases) 下载预览版，将 VCode 拖入 Applications 即可使用。当前提供 Apple Silicon 版本，支持 macOS 13 及以上。
 
-打开应用后，按 **⌘O** 选择项目，也可通过 Finder 的“打开方式”打开仓库中的开发文件。TypeScript 语言服务已随应用打包，无需另装运行时。
+打开应用后，按 **⌘O** 选择项目，也可通过 Finder 的“打开方式”打开仓库中的开发文件。TypeScript 7 原生语言服务已随应用打包，运行时不需要 Node.js 或另装 TypeScript。
 
 应用启动后及运行期间会自动检查新预览版，有更新时可直接下载并重启安装；也可从 **VCode → Check for Updates…** 手动检查，或关闭自动检查。旧版本需先手动安装一次带自动更新能力的版本。
 
