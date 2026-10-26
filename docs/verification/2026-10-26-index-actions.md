@@ -25,4 +25,4 @@
 
 GitServiceTests、IndexActionTests、FileTreeTests、PointerFeedbackTests、ArchitectureTests 与 WorkspaceSwitchTests 共 49 项通过。最终删除样式构建的冻结输入核对无变化，实窗复查 Changes 分类、删除名称与旧内容 diff，证据另存 push-window.png。目录边距与分类全部操作沿用用户明确确认的结果。
 
-仍需用户验证：Changes「+／−」首次移入的真实手形及移出显隐；工具无法稳定捕获真实指针，已请求用户确认，不重复尝试。目前此项未完成，不执行推送。用户维护的 PRD 本轮未改动，未加入本次暂存。
+用户验证通过：用户明确反馈“手形和显隐都正常”，补齐 Changes「+／−」首次移入的真实手形及移出隐藏检查。工具无法稳定捕获真实指针，此项按用户实测记录，不冒充代理验证。本次改动相关验收已完成；用户维护的 PRD 本轮未改动，未加入本次提交。
