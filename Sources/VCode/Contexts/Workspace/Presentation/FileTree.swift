@@ -297,7 +297,7 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
                 let selected = state.changes.filter { $0.comparison == comparison && (query.isEmpty || $0.path.localizedCaseInsensitiveContains(query)) }
                 sectionIndexes[comparison] = FileTreeIndex(paths: selected.map(\.path))
                 sectionCounts[comparison] = selected.count
-                let node = FileNode(name: comparison == .staged ? "Staged Changes" : "Unstaged Changes", path: "", directory: true, comparison: comparison, isSection: true)
+                let node = FileNode(name: comparison == .staged ? "Staged" : "Unstaged", path: "", directory: true, comparison: comparison, isSection: true)
                 nodes[node.identity] = node
                 return node
             }

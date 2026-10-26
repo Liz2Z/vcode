@@ -94,7 +94,7 @@ final class FileTreeTests: XCTestCase {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 30), styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = cell
         defer { withExtendedLifetime(window) {} }
-        cell.label.stringValue = "Unstaged Changes"
+        cell.label.stringValue = "Unstaged"
         for section in [true, false, true, false] {
             cell.isSection = section
             cell.badge.stringValue = section ? "9" : "M"
