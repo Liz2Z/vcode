@@ -15,6 +15,8 @@ enum ReadingCloseScope: CaseIterable {
 struct ReaderSession {
     private(set) var documents: [ReadingDocument] = []
     private(set) var activeDocument: ReadingDocument?
+    // Activation order is independent of the visible tab order, as in VS Code.
+    private var recentDocuments: [ReadingDocument] = []
     var paths: [String] { documents.map(\.path) }
     var activePath: String? { activeDocument.flatMap { $0.isDraft ? nil : $0.path } }
 
@@ -26,6 +28,8 @@ struct ReaderSession {
     mutating func open(_ document: ReadingDocument) {
         if !documents.contains(document) { documents.append(document) }
         activeDocument = document
+        recentDocuments.removeAll { $0 == document }
+        recentDocuments.insert(document, at: 0)
     }
 
     @discardableResult
@@ -68,13 +72,12 @@ struct ReaderSession {
     }
 
     private mutating func remove(_ targets: [ReadingDocument]) -> Bool {
-        let previous = documents
         let oldActive = activeDocument
         let ids = Set(targets.map(\.id))
         documents.removeAll { ids.contains($0.id) }
-        if let oldActive, ids.contains(oldActive.id), let index = previous.firstIndex(of: oldActive) {
-            activeDocument = previous.dropFirst(index + 1).first { !ids.contains($0.id) }
-                ?? previous.prefix(index).last { !ids.contains($0.id) }
+        recentDocuments.removeAll { ids.contains($0.id) }
+        if let oldActive, ids.contains(oldActive.id) {
+            activeDocument = recentDocuments.first
         }
         return oldActive != activeDocument
     }
@@ -83,9 +86,14 @@ struct ReaderSession {
         var seen = Set<ReadingDocument>()
         self.documents = documents.filter { seen.insert($0).inserted }
         activeDocument = active.flatMap { self.documents.contains($0) ? $0 : nil } ?? self.documents.first
+        recentDocuments = self.documents
+        if let activeDocument {
+            recentDocuments.removeAll { $0 == activeDocument }
+            recentDocuments.insert(activeDocument, at: 0)
+        }
     }
 
-    mutating func reset() { documents = []; activeDocument = nil }
+    mutating func reset() { documents = []; activeDocument = nil; recentDocuments = [] }
 
     mutating func renamePaths(_ renames: [String: String]) {
         func renamed(_ document: ReadingDocument) -> ReadingDocument {
@@ -93,5 +101,6 @@ struct ReaderSession {
         }
         documents = documents.map(renamed).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
         activeDocument = activeDocument.map(renamed)
+        recentDocuments = recentDocuments.map(renamed).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
     }
 }

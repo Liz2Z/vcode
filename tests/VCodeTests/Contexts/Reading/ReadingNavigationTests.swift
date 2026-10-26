@@ -80,6 +80,53 @@ final class ReadingNavigationTests: XCTestCase {
         XCTAssertEqual(left.activePath, "c.ts")
     }
 
+    func testCloseReturnsToPreviousActiveEditorWithItsPositionAndKeepsOtherGroup() throws {
+        let root = try root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let controller = WorkspaceController(history: isolatedHistoryStore())
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1360, height: 700), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentViewController = controller
+        window.setContentSize(NSSize(width: 1360, height: 700))
+        defer { controller.shutdown(); withExtendedLifetime(window) {} }
+        let workspace = try XCTUnwrap(controller.view as? WorkspaceView)
+        controller.open(root)
+        waitUntil { workspace.header.worktreeButton.title == root.lastPathComponent }
+        let left = workspace.editor
+        for path in ["a.ts", "b.ts", "c.ts", "a.ts"] {
+            controller.openFile(path, diff: false)
+            waitUntil { left.activePath == path && left.currentSource?.contains(path + " line 0") == true }
+        }
+        controller.splitEditorRight()
+        let right = workspace.editor
+        waitUntil { right.currentSource?.contains("a.ts line 0") == true }
+        controller.openFile("c.ts", diff: false)
+        waitUntil { right.currentSource?.contains("c.ts line 0") == true }
+        workspace.editorGroups.activate(left)
+        workspace.layoutSubtreeIfNeeded()
+        let selection = NSRange(location: left.right.offsets[70] + 12, length: 6)
+        left.right.text.setSelectedRange(selection)
+        left.right.scroll.contentView.scroll(to: NSPoint(x: 120, y: 1000))
+        left.right.scroll.reflectScrolledClipView(left.right.scroll.contentView)
+        let viewport = left.right.scroll.contentView.bounds.origin
+        XCTAssertGreaterThan(viewport.x, 0)
+        XCTAssertGreaterThan(viewport.y, 0)
+        // b.ts has c.ts to its right, but the previously active editor was a.ts.
+        controller.openFile("b.ts", diff: false, line: 130, character: 7, highlightDestination: true)
+        waitUntil { left.activePath == "b.ts" && left.right.position(at: left.right.text.selectedRange().location)?.line == 130 }
+        controller.closeTab()
+        waitUntil { left.activePath == "a.ts" && left.currentSource?.contains("a.ts line 0") == true }
+        XCTAssertEqual(left.right.text.selectedRange(), selection)
+        XCTAssertEqual(left.right.scroll.contentView.bounds.minX, viewport.x, accuracy: 1)
+        XCTAssertEqual(left.right.scroll.contentView.bounds.minY, viewport.y, accuracy: 1)
+        XCTAssertEqual(right.activePath, "c.ts")
+        controller.closeTab()
+        waitUntil { left.activePath == "c.ts" && left.currentSource?.contains("c.ts line 0") == true }
+        controller.closeTab()
+        XCTAssertEqual(workspace.editorGroups.editors.count, 1)
+        XCTAssertTrue(workspace.editor === right)
+        XCTAssertEqual(right.activePath, "c.ts")
+    }
+
     func testExternalWritesRenameDeleteAndRecreateAutomaticallyPreserveAnchors() throws {
         let root = try root()
         defer { try? FileManager.default.removeItem(at: root) }

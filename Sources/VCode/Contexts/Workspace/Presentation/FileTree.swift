@@ -212,7 +212,8 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         }
         let unchanged = !switching && !readingDeferredFolder && self.state?.files == state.files
             && self.state?.directories == state.directories && self.state?.deferredDirectories == state.deferredDirectories
-            && self.state?.searchableFiles == state.searchableFiles && self.state?.changes == state.changes && appliedQuery == filter.stringValue
+            && self.state?.searchableFiles == state.searchableFiles && self.state?.ignoredPaths == state.ignoredPaths
+            && self.state?.changes == state.changes && appliedQuery == filter.stringValue
         self.state = state
         self.changesOnly = changesOnly
         heading.stringValue = changesOnly ? "CHANGES" : "FILES"
@@ -416,8 +417,9 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         let kind = node.change?.kind
         let color = kind == .added || kind == .untracked ? Theme.GitStatus.added : kind == .deleted ? Theme.GitStatus.deleted : Theme.GitStatus.modified
         let deleted = changesOnly && !node.directory && kind == .deleted
+        let ignored = !changesOnly && state?.isGitIgnored(node.path) == true
         cell.label.font = .systemFont(ofSize: node.isSection ? 11 : 13, weight: node.isSection ? .semibold : .regular)
-        cell.label.textColor = node.isSection || deleted ? Theme.muted : Theme.text
+        cell.label.textColor = node.isSection || deleted || ignored ? Theme.muted : Theme.text
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingMiddle
         cell.label.attributedStringValue = NSAttributedString(string: node.name, attributes: [

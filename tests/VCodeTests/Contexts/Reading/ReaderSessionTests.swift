@@ -102,4 +102,59 @@ final class ReaderSessionTests: XCTestCase {
         XCTAssertEqual(session.documents, before)
         XCTAssertEqual(session.activeDocument, active)
     }
+
+    func testClosingFollowsActivationOrderRatherThanAdjacentTabsOrTabReordering() {
+        var session = ReaderSession()
+        for path in ["a.ts", "b.ts", "c.ts", "d.ts"] { session.open(path) }
+        session.open("b.ts")
+        session.open("a.ts")
+        XCTAssertTrue(session.move(session.documents[1], to: 4))
+        XCTAssertEqual(session.paths, ["a.ts", "c.ts", "d.ts", "b.ts"])
+        for (closed, expected) in [("a.ts", "b.ts"), ("b.ts", "d.ts"), ("d.ts", "c.ts")] {
+            XCTAssertTrue(session.close(closed))
+            XCTAssertEqual(session.activePath, expected)
+        }
+        XCTAssertTrue(session.close("c.ts"))
+        XCTAssertNil(session.activeDocument)
+    }
+
+    func testBatchCloseSkipsClosedHistoryAndKeepsSurvivingActiveTab() {
+        var session = ReaderSession()
+        for path in ["a.ts", "b.ts", "c.ts", "d.ts"] { session.open(path) }
+        session.open("a.ts"); session.open("c.ts")
+        XCTAssertFalse(session.close("a.ts"))
+        XCTAssertEqual(session.activePath, "c.ts")
+        XCTAssertTrue(session.close([session.documents[0], session.documents[1]]))
+        XCTAssertEqual(session.activePath, "d.ts")
+        XCTAssertEqual(session.paths, ["d.ts"])
+    }
+
+    func testComparisonAndDraftActivationHaveIndependentIdentities() {
+        var session = ReaderSession()
+        let source = ReadingDocument(path: "same.ts", comparison: nil)
+        let staged = ReadingDocument(path: "same.ts", comparison: .staged)
+        let unstaged = ReadingDocument(path: "same.ts", comparison: .unstaged)
+        let draft = ReadingDocument(path: "Untitled-1", comparison: nil, draftID: UUID())
+        for document in [source, staged, unstaged, draft, source, draft] { session.open(document) }
+        XCTAssertTrue(session.close(draft)); XCTAssertEqual(session.activeDocument, source)
+        XCTAssertTrue(session.close(source)); XCTAssertEqual(session.activeDocument, unstaged)
+        XCTAssertTrue(session.close(unstaged)); XCTAssertEqual(session.activeDocument, staged)
+    }
+
+    func testRestoreRenameAndResetCannotLeaveStaleActivationTargets() {
+        var session = ReaderSession()
+        let a = ReadingDocument(path: "a.ts", comparison: nil)
+        let b = ReadingDocument(path: "b.ts", comparison: nil)
+        let c = ReadingDocument(path: "c.ts", comparison: nil)
+        session.open("old.ts")
+        session.restore(documents: [a, b, c, b], active: b)
+        session.open(a); session.open(c)
+        session.renamePaths(["a.ts": "renamed.ts"])
+        XCTAssertTrue(session.close(c)); XCTAssertEqual(session.activePath, "renamed.ts")
+        XCTAssertTrue(session.close("renamed.ts")); XCTAssertEqual(session.activeDocument, b)
+        session.reset()
+        session.open("new.ts")
+        XCTAssertTrue(session.close("new.ts")); XCTAssertNil(session.activeDocument)
+        XCTAssertTrue(session.documents.isEmpty)
+    }
 }

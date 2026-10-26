@@ -10,20 +10,31 @@ struct WorkspaceState {
     let searchableFiles: [String]
     let directories: [String]
     let deferredDirectories: Set<String>
+    let ignoredPaths: Set<String>
 
     init(root: URL, files: [String], git: GitStatus?, project: GitProject? = nil, fileIdentities: [String: AnyHashable] = [:],
-         searchableFiles: [String]? = nil, directories: [String] = [], deferredDirectories: Set<String> = []) {
+         searchableFiles: [String]? = nil, directories: [String] = [], deferredDirectories: Set<String> = [], ignoredPaths: Set<String> = []) {
         self.root = root; self.files = files; self.git = git; self.project = project
         self.fileIdentities = fileIdentities
         self.searchableFiles = searchableFiles ?? files
         self.directories = directories
         self.deferredDirectories = deferredDirectories
+        self.ignoredPaths = ignoredPaths
     }
 
     var branch: String { git?.branch ?? "Folder" }
     var changes: [GitChange] { git?.changes ?? [] }
     var isGit: Bool { git != nil }
     var hasHead: Bool { git?.hasHead == true }
+
+    func isGitIgnored(_ path: String) -> Bool {
+        var prefix = ""
+        for component in path.split(separator: "/") {
+            prefix = prefix.isEmpty ? String(component) : prefix + "/" + component
+            if ignoredPaths.contains(prefix) || ignoredPaths.contains(prefix + "/") { return true }
+        }
+        return false
+    }
 
     func isDeferredDirectory(_ path: String) -> Bool {
         var prefix = ""

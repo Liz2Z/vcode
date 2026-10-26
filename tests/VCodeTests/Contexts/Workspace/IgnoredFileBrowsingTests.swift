@@ -28,6 +28,73 @@ final class IgnoredFileBrowsingTests: XCTestCase {
         try XCTUnwrap((0..<tree.outline.numberOfRows).compactMap { tree.outline.item(atRow: $0) as? FileNode }.first { $0.path == path }, "Missing row: " + path)
     }
 
+    func testGitIgnoredNamesAreMutedIncludingLazyDescendantsButNotTrackedExceptions() throws {
+        try write("tracked.ts", "tracked exception\n")
+        let git = Process(); git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        git.arguments = ["-C", root.path, "add", "tracked.ts"]
+        try git.run(); git.waitUntilExit(); XCTAssertEqual(git.terminationStatus, 0)
+        try write(".gitignore", "ignored/\nsecret.env\ntracked.ts\n*.tmp\n!keep.tmp\n")
+        try write("drop.tmp", "ignored\n"); try write("keep.tmp", "exception\n")
+        try write("ignored-neighbor.ts", "normal\n")
+        let reader = try WorkspaceReader(folder: root), state = try reader.load()
+        XCTAssertTrue(state.isGitIgnored("ignored"))
+        XCTAssertTrue(state.isGitIgnored("ignored/deep/secret.ts"))
+        XCTAssertTrue(state.isGitIgnored("secret.env"))
+        XCTAssertFalse(state.isGitIgnored("tracked.ts"))
+        XCTAssertFalse(state.isGitIgnored("keep.tmp"))
+        XCTAssertFalse(state.isGitIgnored("ignored-neighbor.ts"))
+        let tree = FileTree()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = tree
+        defer { withExtendedLifetime(window) {} }
+        var loaded: [String] = []
+        tree.loadDirectory = { loaded.append($0); return try reader.files.children(in: $0) }
+        tree.show(state, changesOnly: false)
+        XCTAssertTrue(loaded.isEmpty)
+        tree.outline.expandItem(try node(tree, "ignored"))
+        tree.outline.expandItem(try node(tree, "ignored/deep"))
+        XCTAssertEqual(loaded, ["ignored", "ignored/deep"])
+        var selected: String?
+        tree.onSelect = { path, _ in selected = path }
+        for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
+            window.appearance = NSAppearance(named: appearanceName)
+            for path in ["ignored", "ignored/deep", "ignored/deep/secret.ts", "secret.env", "drop.tmp", "main.ts", "tracked.ts", "keep.tmp", "ignored-neighbor.ts", "node_modules"] {
+                let item = try node(tree, path)
+                let row = tree.outline.row(forItem: item)
+                let cell = try XCTUnwrap(tree.outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? FileCell)
+                let expected = state.isGitIgnored(path) ? Theme.muted : Theme.text
+                XCTAssertEqual(cell.label.attributedStringValue.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, expected, path)
+                cell.setRowHovered(true)
+                tree.outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                XCTAssertEqual(cell.label.textColor, expected, "Selection must not remove the ignore decoration")
+                XCTAssertEqual(cell.label.attributedStringValue.attribute(.strikethroughStyle, at: 0, effectiveRange: nil) as? Int, 0)
+            }
+        }
+        tree.outline.selectRowIndexes(IndexSet(integer: tree.outline.row(forItem: try node(tree, "ignored/deep/secret.ts"))), byExtendingSelection: false)
+        XCTAssertEqual(selected, "ignored/deep/secret.ts")
+        XCTAssertEqual(try reader.snapshot(path: "ignored/deep/secret.ts", state: state, compare: false).after, "excludedNeedle\n")
+    }
+
+    func testChangingOnlyIgnoredDecorationRefreshesRowsWithoutLeavingOldMutedColor() throws {
+        let tree = FileTree()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = tree
+        defer { withExtendedLifetime(window) {} }
+        for ignored: Set<String> in [["secret.env"], [], ["secret.env"]] {
+            tree.show(WorkspaceState(root: root, files: ["secret.env", "main.ts"], git: nil, ignoredPaths: ignored), changesOnly: false)
+            for path in ["secret.env", "main.ts"] {
+                let row = tree.outline.row(forItem: try node(tree, path))
+                let cell = try XCTUnwrap(tree.outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? FileCell)
+                XCTAssertEqual(cell.label.textColor, ignored.contains(path) ? Theme.muted : Theme.text)
+            }
+        }
+        tree.show(WorkspaceState(root: root, files: ["secret.env"], git: GitStatus(root: root, branch: "main", changes: [GitChange(path: "secret.env", kind: .modified, comparison: .unstaged)], hasHead: true), ignoredPaths: ["secret.env"]), changesOnly: true)
+        let row = tree.outline.row(forItem: try node(tree, "secret.env"))
+        let cell = try XCTUnwrap(tree.outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? FileCell)
+        XCTAssertEqual(cell.label.textColor, Theme.text, "Changes keeps its existing Git change presentation")
+        XCTAssertEqual(cell.badge.stringValue, "M")
+    }
+
     func testDirectoryMarkersNeverBecomeBlankRowsInsideTheirOwnFolder() throws {
         let index = FileTreeIndex(paths: ["src/", "src/empty/", "src/code.ts", "empty/"])
         XCTAssertEqual(index.children(in: "").map(\.path), ["empty", "src"])
