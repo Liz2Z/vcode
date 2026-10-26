@@ -121,6 +121,21 @@ final class GitCLI: GitRepository {
         }, worktrees: worktrees)
     }
 
+    func updateIndex(_ action: GitIndexAction, paths: [String], hasHead: Bool) throws {
+        guard !paths.isEmpty else { return }
+        let input = Data((paths.joined(separator: "\0") + "\0").utf8)
+        switch action {
+        case .stage:
+            _ = try run(arguments: ["--literal-pathspecs", "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"], input: input)
+        case .unstage where hasHead:
+            _ = try run(arguments: ["--literal-pathspecs", "restore", "--staged", "--source=HEAD", "--pathspec-from-file=-", "--pathspec-file-nul"], input: input)
+        case .unstage:
+            // An unborn branch has no HEAD to restore. Remove only the specified
+            // index entries; update-index never deletes or rewrites working files.
+            _ = try run(arguments: ["update-index", "--force-remove", "-z", "--stdin"], input: input)
+        }
+    }
+
     func switchBranch(_ name: String) throws {
         guard !name.isEmpty, !name.hasPrefix("-"), (try? read(["show-ref", "--verify", "--quiet", "refs/heads/" + name])) != nil else {
             throw GitError.command("This local branch no longer exists. Refresh the branch list.")

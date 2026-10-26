@@ -96,6 +96,13 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         }
         workspace.navigation.files.target = self; workspace.navigation.files.action = #selector(showFiles)
         workspace.navigation.changes.target = self; workspace.navigation.changes.action = #selector(showChanges)
+        session.onIndexBusyChange = { [weak self] busy in
+            guard let self else { return }
+            self.workspace.explorer.setIndexBusy(busy)
+            self.workspace.header.setBusy(busy || self.session.isSwitching)
+            self.historySidebar?.setBusy(busy || self.session.isSwitching)
+        }
+        workspace.explorer.onIndexAction = { [weak self] action, target in self?.updateIndex(action, target: target) }
         workspace.explorer.onSelect = { [weak self] path, comparison in self?.openFile(path, diff: comparison != nil, comparison: comparison ?? .workingTree) }
         workspace.explorer.onReveal = { [weak self] path in
             guard let url = try? self?.session.reader?.files.safeURL(path) else { return }
@@ -209,6 +216,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         }
         displayedState = state
         workspace.show(state, changesOnly: changesOnly)
+        workspace.header.setBusy(session.isUpdatingIndex || session.isSwitching)
         updateHistorySidebar()
         if changedRoot {
             if let saved {
@@ -690,7 +698,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     }
 
     private func showPicker(_ kind: GitDestinationPicker.Kind, anchor: NSButton) {
-        guard session.state?.isGit == true, !session.isSwitching else { return }
+        guard session.state?.isGit == true, !session.isSwitching, !session.isUpdatingIndex else { return }
         dismissShortcuts()
         dismissCodeHover()
         dismissQuickOpen()
@@ -728,8 +736,25 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         }
     }
 
+    func updateIndex(_ action: GitIndexAction, target: GitChangeTarget) {
+        guard session.state?.isGit == true, !session.isSwitching, !session.isUpdatingIndex else { return }
+        dismissCodeHover()
+        workspace.status.message.stringValue = action == .stage ? "Staging changes…" : "Unstaging changes…"
+        session.updateIndex(action, target: target) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.workspace.status.message.stringValue = action == .stage ? "Changes staged" : "Changes unstaged"
+                self.workspace.status.message.toolTip = nil
+            case .failure(let error):
+                self.workspace.status.message.stringValue = error.localizedDescription
+                self.workspace.status.message.toolTip = error.localizedDescription
+            }
+        }
+    }
+
     func activate(_ destination: GitDestination, completion: @escaping (Result<WorkspaceState, Error>) -> Void) {
-        guard !session.isSwitching, session.reader != nil else { return }
+        guard !session.isSwitching, !session.isUpdatingIndex, session.reader != nil else { return }
         cancelExternalOpen()
         saveReadingSession()
         readingStateReady = false

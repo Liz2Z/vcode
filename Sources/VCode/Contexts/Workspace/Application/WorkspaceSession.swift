@@ -5,6 +5,7 @@ final class WorkspaceSession {
     private(set) var state: WorkspaceState?
     var onOpen: ((WorkspaceState) -> Void)?
     var onRefresh: ((WorkspaceState) -> Void)?
+    var onIndexBusyChange: ((Bool) -> Void)?
     var onError: ((Error) -> Void)?
     private let queue = DispatchQueue(label: "vcode.workspace", qos: .userInitiated)
     private var watcher: FolderWatcher?
@@ -14,6 +15,7 @@ final class WorkspaceSession {
     private var refreshing = false
     private var refreshAgain = false
     private(set) var isSwitching = false
+    private(set) var isUpdatingIndex = false
     var inspectedDirectories: Set<String> = []
     private var openedFiles: Set<String> = []
 
@@ -26,6 +28,7 @@ final class WorkspaceSession {
         refreshing = false
         refreshAgain = false
         isSwitching = false
+        isUpdatingIndex = false; onIndexBusyChange?(false)
         inspectedDirectories = []; openedFiles = []
         let token = generation
         queue.async { [weak self] in
@@ -47,6 +50,7 @@ final class WorkspaceSession {
 
     func refresh() {
         guard let reader, !isSwitching else { return }
+        if isUpdatingIndex { refreshAgain = true; return }
         if refreshing { refreshAgain = true; return }
         refreshing = true
         let token = generation
@@ -99,8 +103,32 @@ final class WorkspaceSession {
         }
     }
 
+    func updateIndex(_ action: GitIndexAction, target: GitChangeTarget, completion: @escaping (Result<WorkspaceState, Error>) -> Void) {
+        guard let reader, state?.isGit == true, !isSwitching, !isUpdatingIndex else { return }
+        isUpdatingIndex = true
+        onIndexBusyChange?(true)
+        let token = generation
+        queue.async { [weak self] in
+            let result = Result { try reader.git.updateIndex(action, target: target); return try reader.load() }
+            DispatchQueue.main.async {
+                guard let self, self.generation == token else { return }
+                self.isUpdatingIndex = false
+                self.onIndexBusyChange?(false)
+                switch result {
+                case .success(let state):
+                    self.invalidateDocument()
+                    self.state = state
+                    self.onRefresh?(state)
+                case .failure: break
+                }
+                completion(result)
+                if self.refreshAgain { self.refreshAgain = false; self.refresh() }
+            }
+        }
+    }
+
     func activate(_ destination: GitDestination, completion: @escaping (Result<WorkspaceState, Error>) -> Void) {
-        guard let reader, !isSwitching else { return }
+        guard let reader, !isSwitching, !isUpdatingIndex else { return }
         isSwitching = true
         generation = UUID()
         invalidateDocument()
@@ -148,6 +176,7 @@ final class WorkspaceSession {
         refreshing = false
         refreshAgain = false
         isSwitching = false
+        isUpdatingIndex = false; onIndexBusyChange?(false)
         inspectedDirectories = []; openedFiles = []
     }
     deinit { watcher = nil }

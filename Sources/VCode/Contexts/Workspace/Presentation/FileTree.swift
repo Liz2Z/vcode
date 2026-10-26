@@ -22,19 +22,23 @@ final class FileNode: NSObject {
 final class FileCell: NSTableCellView {
     let label = Theme.label("", size: 13)
     let badge = Theme.label("", size: 10, weight: .semibold)
+    let indexButton = Theme.button("plus", tooltip: "Stage Changes", target: nil, action: nil)
+    var onIndexAction: (() -> Void)?
+    var isIndexBusy = false
+    private(set) var indexActionAvailable = true
+    private var hasIndexAction = false
+    private var rowHovered = false
     private var titleTrailing: NSLayoutConstraint!
+    private var actionTitleTrailing: NSLayoutConstraint!
     private var badgeTrailing: NSLayoutConstraint!
     private var sectionBadgeTrailing: NSLayoutConstraint!
-    var isSection = false {
-        didSet {
-            guard oldValue != isSection else { return }
-            titleTrailing.constant = isSection ? -8 : -7
-            badgeTrailing.isActive = !isSection
-            sectionBadgeTrailing.isActive = isSection
-            badge.alignment = isSection ? .left : .right
-            label.setContentHuggingPriority(isSection ? .defaultHigh : .defaultLow, for: .horizontal)
-        }
-    }
+    private var sectionBadgeBeforeAction: NSLayoutConstraint!
+    private var fileActionTrailing: NSLayoutConstraint!
+    private var sectionActionTrailing: NSLayoutConstraint!
+    private var directoryActionTrailing: NSLayoutConstraint!
+    private var directoryTitleTrailing: NSLayoutConstraint!
+    var isSection = false { didSet { updateLayout() } }
+    var isDirectory = false { didSet { updateLayout() } }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -42,16 +46,77 @@ final class FileCell: NSTableCellView {
         badge.setContentCompressionResistancePriority(.required, for: .horizontal)
         badge.setContentHuggingPriority(NSLayoutConstraint.Priority(751), for: .horizontal)
         badge.alignment = .right
-        add(label, badge)
+        indexButton.feedbackRadius = 4
+        indexButton.horizontalPadding = 0
+        indexButton.isHidden = true
+        indexButton.target = self
+        indexButton.action = #selector(changeIndex)
+        add(label, indexButton, badge)
         titleTrailing = label.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -7)
+        actionTitleTrailing = label.trailingAnchor.constraint(equalTo: indexButton.leadingAnchor, constant: -4)
         badgeTrailing = badge.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10)
         sectionBadgeTrailing = badge.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10)
+        sectionBadgeBeforeAction = badge.trailingAnchor.constraint(lessThanOrEqualTo: indexButton.leadingAnchor, constant: -4)
+        fileActionTrailing = indexButton.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -4)
+        sectionActionTrailing = indexButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4)
+        directoryActionTrailing = indexButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10)
+        directoryTitleTrailing = label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4), label.centerYAnchor.constraint(equalTo: centerYAnchor), titleTrailing,
-            badgeTrailing, badge.centerYAnchor.constraint(equalTo: centerYAnchor), badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 20)
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4), label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            badge.centerYAnchor.constraint(equalTo: centerYAnchor), badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 20),
+            indexButton.centerYAnchor.constraint(equalTo: centerYAnchor), indexButton.widthAnchor.constraint(equalToConstant: 22), indexButton.heightAnchor.constraint(equalToConstant: 22)
         ])
+        updateLayout()
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    private func updateLayout() {
+        guard titleTrailing != nil else { return }
+        NSLayoutConstraint.deactivate([titleTrailing, actionTitleTrailing, badgeTrailing, sectionBadgeTrailing,
+                                        sectionBadgeBeforeAction, fileActionTrailing, sectionActionTrailing,
+                                        directoryActionTrailing, directoryTitleTrailing])
+        titleTrailing.constant = isSection ? -8 : -7
+        if isSection {
+            NSLayoutConstraint.activate([titleTrailing, sectionActionTrailing,
+                hasIndexAction ? sectionBadgeBeforeAction : sectionBadgeTrailing])
+        } else if isDirectory {
+            NSLayoutConstraint.activate([hasIndexAction ? actionTitleTrailing : directoryTitleTrailing, directoryActionTrailing, badgeTrailing])
+        } else {
+            NSLayoutConstraint.activate([hasIndexAction ? actionTitleTrailing : titleTrailing, badgeTrailing, fileActionTrailing])
+        }
+        badge.alignment = isSection ? .left : .right
+        badge.isHidden = isDirectory && !isSection
+        label.setContentHuggingPriority(isSection ? .defaultHigh : .defaultLow, for: .horizontal)
+    }
+
+    func configureIndexAction(_ action: GitIndexAction?, path: String, enabled: Bool, available: Bool = true) {
+        hasIndexAction = action != nil
+        indexActionAvailable = available
+        updateLayout()
+        updateIndexAvailability(outlineEnabled: enabled)
+        indexButton.image = action.flatMap { NSImage(systemSymbolName: $0.symbol, accessibilityDescription: nil) }
+        let description = action.map { isSection ? $0.allTitle : $0.title + " · " + path }
+        indexButton.toolTip = description
+        indexButton.setAccessibilityLabel(description)
+        if action == nil { onIndexAction = nil }
+        setRowHovered(rowHovered)
+    }
+
+    func updateIndexAvailability(outlineEnabled: Bool) {
+        indexButton.isEnabled = outlineEnabled && !isIndexBusy && indexActionAvailable
+    }
+
+    func setRowHovered(_ hovered: Bool) {
+        rowHovered = hovered
+        // Keep the space reserved even while hidden, so names and counts never jump.
+        indexButton.isHidden = !hasIndexAction || !hovered
+        indexButton.refreshHover()
+    }
+
+    @objc private func changeIndex() {
+        guard indexButton.isEnabled, !indexButton.isHidden else { return }
+        onIndexAction?()
+    }
 }
 
 final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
@@ -60,6 +125,8 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     let count = Theme.label("", size: 10, color: Theme.muted)
     let emptyLabel = Theme.label("Open a folder to get started", color: Theme.muted)
     let filter = Theme.searchField()
+    var onIndexAction: ((GitIndexAction, GitChangeTarget) -> Void)?
+    private(set) var isIndexBusy = false
     var onSelect: ((String, GitComparison?) -> Void)?
     var onReveal: ((String) -> Void)?
     var loadDirectory: ((String) throws -> [FileTreeEntry])?
@@ -153,6 +220,17 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         rebuild(reset: switching)
     }
 
+    func setIndexBusy(_ busy: Bool) {
+        isIndexBusy = busy
+        outline.enumerateAvailableRowViews { rowView, row in
+            guard let cell = self.outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? FileCell else { return }
+            cell.isIndexBusy = busy
+            cell.updateIndexAvailability(outlineEnabled: self.outline.isEnabled)
+            rowView.needsDisplay = true
+        }
+        outline.window?.invalidateCursorRects(for: outline)
+    }
+
     func captureSession() -> FileTreeReadingState {
         let folders = nodes.values.filter { $0.directory }
         return FileTreeReadingState(
@@ -241,6 +319,10 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         }
         if let selection, let node = nodes[selection], outline.row(forItem: node) >= 0 {
             outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: node)), byExtendingSelection: false)
+        } else {
+            // Staging can remove the selected item from this category. Do not
+            // leave its former row index selected on an unrelated file.
+            outline.deselectAll(nil)
         }
         count.stringValue = changesOnly || !query.isEmpty ? "\(paths.count)" : "\(state.files.count)" + (state.deferredDirectories.isEmpty ? "" : "+")
         count.toolTip = !changesOnly && query.isEmpty && !state.deferredDirectories.isEmpty ? "More files are available in collapsed folders." : nil
@@ -330,15 +412,34 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         let id = NSUserInterfaceItemIdentifier("file")
         let cell = (outlineView.makeView(withIdentifier: id, owner: nil) as? FileCell) ?? FileCell()
         cell.identifier = id
-        cell.label.stringValue = node.name
         cell.toolTip = node.path
         let kind = node.change?.kind
         let color = kind == .added || kind == .untracked ? Theme.GitStatus.added : kind == .deleted ? Theme.GitStatus.deleted : Theme.GitStatus.modified
+        let deleted = changesOnly && !node.directory && kind == .deleted
         cell.label.font = .systemFont(ofSize: node.isSection ? 11 : 13, weight: node.isSection ? .semibold : .regular)
-        cell.label.textColor = node.isSection ? Theme.muted : Theme.text
+        cell.label.textColor = node.isSection || deleted ? Theme.muted : Theme.text
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingMiddle
+        cell.label.attributedStringValue = NSAttributedString(string: node.name, attributes: [
+            .font: cell.label.font!, .foregroundColor: cell.label.textColor!, .paragraphStyle: paragraph,
+            .strikethroughStyle: deleted ? NSUnderlineStyle.single.rawValue : 0
+        ])
         cell.isSection = node.isSection
+        cell.isDirectory = node.directory
         cell.badge.stringValue = node.isSection ? "\(sectionCounts[node.comparison ?? .unstaged] ?? 0)" : kind?.rawValue ?? ""
         cell.badge.textColor = node.isSection ? Theme.accent : color
+        let action: GitIndexAction? = changesOnly && state?.isGit == true
+            ? node.comparison == .staged ? .unstage : .stage : nil
+        cell.isIndexBusy = isIndexBusy
+        let available = !node.isSection || state?.changes.contains { $0.comparison == node.comparison } == true
+        cell.configureIndexAction(action, path: node.path, enabled: outline.isEnabled, available: available)
+        let row = outline.row(forItem: node)
+        cell.setRowHovered(row >= 0 && (outline.rowView(atRow: row, makeIfNecessary: false) as? SelectionRowView)?.isHovered == true)
+        cell.onIndexAction = action.map { action in { [weak self, weak node] in
+            guard let self, let node, self.nodes[node.identity] === node,
+                  self.outline.isEnabled, !self.isIndexBusy else { return }
+            self.onIndexAction?(action, node.isSection ? .all : node.directory ? .directory(node.path) : .file(node.path))
+        } }
         return cell
     }
     func outlineViewSelectionDidChange(_ notification: Notification) {

@@ -5,6 +5,49 @@ import XCTest
 final class FileTreeTests: XCTestCase {
     override func setUp() { _ = NSApplication.shared }
 
+    func testDeletedNamesAreStruckOnlyInTheirDeletedComparisonAndResetAfterRefresh() throws {
+        let tree = FileTree()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = tree
+        defer { withExtendedLifetime(window) {} }
+        let root = URL(fileURLWithPath: "/tmp/deleted-name-style")
+        let path = "src/a-long-deleted-document-name.md"
+        func state(_ kind: GitChangeKind) -> WorkspaceState {
+            WorkspaceState(root: root, files: [path], git: GitStatus(root: root, branch: "main", changes: [
+                GitChange(path: path, kind: kind, comparison: .staged),
+                GitChange(path: path, kind: .untracked, comparison: .unstaged),
+                GitChange(path: "src/removed.ts", kind: .deleted, comparison: .unstaged)
+            ], hasHead: true))
+        }
+        for kind in [GitChangeKind.deleted, .modified, .deleted] {
+            tree.show(state(kind), changesOnly: true)
+            tree.layoutSubtreeIfNeeded()
+            for i in 0..<tree.outline.numberOfRows {
+                let node = try XCTUnwrap(tree.outline.item(atRow: i) as? FileNode)
+                let cell = try XCTUnwrap(tree.outline.view(atColumn: 0, row: i, makeIfNecessary: true) as? FileCell)
+                let deleted = (node.path == path && node.comparison == .staged && kind == .deleted) || node.path == "src/removed.ts"
+                let title = cell.label.attributedStringValue
+                XCTAssertEqual(title.attribute(.strikethroughStyle, at: 0, effectiveRange: nil) as? Int, deleted ? 1 : 0)
+                XCTAssertEqual(title.string, node.name)
+                XCTAssertEqual((title.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.lineBreakMode, .byTruncatingMiddle)
+                if deleted {
+                    XCTAssertEqual(cell.badge.stringValue, "D")
+                    XCTAssertEqual(title.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, Theme.muted)
+                    cell.setRowHovered(true)
+                    XCTAssertFalse(cell.indexButton.isHidden)
+                    XCTAssertTrue(cell.indexButton.isEnabled)
+                }
+            }
+            // A staged deletion can coexist with a recreated working file: Files stays unstruck.
+            tree.show(state(kind), changesOnly: false)
+            tree.outline.expandItem(nil, expandChildren: true)
+            for i in 0..<tree.outline.numberOfRows {
+                let cell = try XCTUnwrap(tree.outline.view(atColumn: 0, row: i, makeIfNecessary: true) as? FileCell)
+                XCTAssertEqual(cell.label.attributedStringValue.attribute(.strikethroughStyle, at: 0, effectiveRange: nil) as? Int, 0)
+            }
+        }
+    }
+
     func testGroupCountsStayBesideTitlesAndOutsideScrollbarAfterResizeAndCollapse() throws {
         let tree = FileTree()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 500), styleMask: [.borderless], backing: .buffered, defer: false)
