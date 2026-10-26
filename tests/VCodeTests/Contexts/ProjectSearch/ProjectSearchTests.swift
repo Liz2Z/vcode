@@ -83,8 +83,9 @@ final class ProjectSearchTests: XCTestCase {
         try write("generated/untracked.ts", "needle\n"); try write("cache/data.ts", "needle\n")
         let state = try WorkspaceReader(folder: root).load()
         XCTAssertTrue(state.files.contains("generated/keep.ts"))
-        XCTAssertFalse(state.files.contains("generated/untracked.ts")); XCTAssertFalse(state.files.contains("cache/data.ts"))
-        XCTAssertEqual(try search(ProjectSearchQuery(text: "needle"), paths: state.files).matches.map(\.path), ["generated/keep.ts"])
+        XCTAssertTrue(state.files.contains("generated/untracked.ts"))
+        XCTAssertFalse(state.searchableFiles.contains("generated/untracked.ts")); XCTAssertFalse(state.searchableFiles.contains("cache/data.ts"))
+        XCTAssertEqual(try search(ProjectSearchQuery(text: "needle"), paths: state.searchableFiles).matches.map(\.path), ["generated/keep.ts"])
     }
 
     func testQuickOpenFuzzyRankingRecentFilesAndPersistence() throws {

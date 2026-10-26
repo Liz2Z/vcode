@@ -49,6 +49,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         Theme.rounded(self)
+        left.scroll.hasVerticalScroller = false
         split.isVertical = true
         split.dividerStyle = .thin
         split.delegate = self
@@ -167,6 +168,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         }
         split.needsDisplay = true
         if !unchanged {
+            right.showDiffOverview(diff ? next.rows : nil)
             if diff {
                 left.show(lines: next.rows.map(\.left), path: next.path, title: "Original", detail: next.comparison == .unstaged ? "INDEX" : "HEAD")
                 right.show(lines: next.rows.map(\.right), path: next.path, title: "Modified", detail: next.comparison == .staged ? "INDEX" : "WORKING TREE")
@@ -226,6 +228,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         changeIndex = -1
         left.show(lines: [], path: "", title: "", detail: "")
         right.show(lines: [], path: "", title: "", detail: "")
+        right.showDiffOverview(nil)
         left.isHidden = true
         left.removeFromSuperview()
         split.isHidden = true

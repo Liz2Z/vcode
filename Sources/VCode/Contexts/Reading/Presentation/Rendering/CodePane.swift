@@ -4,12 +4,15 @@ final class CodePane: NSView {
     let scroll = NSScrollView()
     let text: CodeTextView
     let gutter: CodeGutter
+    let diffOverview = DiffOverview()
+    private var overviewWidth: NSLayoutConstraint!
     private let codeLayout: CodeLayoutManager
     private let caption = Theme.label("", size: 11, color: Theme.muted)
     private let badge = Theme.label("", size: 11, color: Theme.muted)
     private let header = NSView()
     private var headerHeight: NSLayoutConstraint!
     private var observation: NSObjectProtocol?
+    private var documentObservation: NSObjectProtocol?
     private(set) var lines: [CodeLine] = []
     private(set) var offsets: [Int] = []
     var onScroll: ((NSPoint) -> Void)?
@@ -56,32 +59,68 @@ final class CodePane: NSView {
         scroll.scrollerStyle = .overlay
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
+        scroll.clipsToBounds = true
         scroll.backgroundColor = Theme.background
         scroll.verticalRulerView = gutter
         scroll.hasVerticalRuler = true
         scroll.rulersVisible = true
         scroll.contentView.postsBoundsChangedNotifications = true
+        text.postsFrameChangedNotifications = true
+        documentObservation = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: text, queue: .main) { [weak self] _ in
+            self?.updateOverview()
+        }
         observation = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.text.cancelInspection()
             self.gutter.needsDisplay = true
             self.text.needsDisplay = true
+            self.updateOverview()
             if !self.isSyncing { self.onScroll?(self.scroll.contentView.bounds.origin) }
         }
         Theme.fill(header, Theme.background)
         header.add(caption, badge)
-        add(header, scroll)
+        add(header, scroll, diffOverview)
+        diffOverview.isHidden = true
+        overviewWidth = diffOverview.widthAnchor.constraint(equalToConstant: 0)
+        diffOverview.onNavigate = { [weak self] y in
+            guard let self else { return }
+            self.scrollTo(NSPoint(x: self.scroll.contentView.bounds.minX, y: y))
+            self.onScroll?(self.scroll.contentView.bounds.origin)
+            self.updateOverview()
+        }
+        diffOverview.onWheel = { [weak self] event in self?.scroll.scrollWheel(with: event) }
         headerHeight = header.heightAnchor.constraint(equalToConstant: 28)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: topAnchor), header.leadingAnchor.constraint(equalTo: leadingAnchor), header.trailingAnchor.constraint(equalTo: trailingAnchor), headerHeight,
             caption.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: Theme.Layout.inset), caption.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             badge.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -Theme.Layout.inset), badge.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             caption.trailingAnchor.constraint(lessThanOrEqualTo: badge.leadingAnchor, constant: -8),
-            scroll.topAnchor.constraint(equalTo: header.bottomAnchor), scroll.leadingAnchor.constraint(equalTo: leadingAnchor), scroll.trailingAnchor.constraint(equalTo: trailingAnchor), scroll.bottomAnchor.constraint(equalTo: bottomAnchor)
+            scroll.topAnchor.constraint(equalTo: header.bottomAnchor), scroll.leadingAnchor.constraint(equalTo: leadingAnchor), scroll.trailingAnchor.constraint(equalTo: diffOverview.leadingAnchor), scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            diffOverview.topAnchor.constraint(equalTo: scroll.topAnchor), diffOverview.bottomAnchor.constraint(equalTo: scroll.bottomAnchor), diffOverview.trailingAnchor.constraint(equalTo: trailingAnchor), overviewWidth
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
-    deinit { if let observation { NotificationCenter.default.removeObserver(observation) } }
+    deinit {
+        if let observation { NotificationCenter.default.removeObserver(observation) }
+        if let documentObservation { NotificationCenter.default.removeObserver(documentObservation) }
+    }
+
+    func showDiffOverview(_ rows: [DiffRow]?) {
+        diffOverview.isHidden = rows == nil
+        overviewWidth.constant = rows == nil ? 0 : 14
+        scroll.hasVerticalScroller = rows == nil
+        Theme.compactScrollers(scroll)
+        diffOverview.show(rows: rows ?? [])
+        updateOverview()
+    }
+
+    override func layout() { super.layout(); updateOverview() }
+
+    private func updateOverview() {
+        guard !diffOverview.isHidden else { return }
+        diffOverview.update(documentHeight: text.bounds.height, visibleHeight: scroll.contentView.bounds.height,
+                            scrollY: scroll.contentView.bounds.minY)
+    }
 
     func show(lines: [CodeLine], path: String, title: String, detail: String, showsHeader: Bool = true) {
         text.cancelNavigationFlash()

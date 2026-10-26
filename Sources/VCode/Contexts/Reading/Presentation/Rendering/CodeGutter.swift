@@ -10,10 +10,16 @@ final class CodeGutter: NSRulerView {
         super.init(scrollView: scroll, orientation: .verticalRuler)
         clientView = text
         ruleThickness = 58
+        clipsToBounds = true
     }
     required init(coder: NSCoder) { fatalError() }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
+        // Overscan rows can have negative y at a fractional scroll offset.
+        // Keep them inside the ruler, matching the text viewport's clipping.
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        bounds.clip()
         Theme.background.setFill()
         bounds.fill()
         guard code != nil, let scrollView else { return }

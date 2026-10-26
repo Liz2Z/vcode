@@ -7,16 +7,32 @@ struct WorkspaceState {
     let git: GitStatus?
     let project: GitProject?
     let fileIdentities: [String: AnyHashable]
+    let searchableFiles: [String]
+    let directories: [String]
+    let deferredDirectories: Set<String>
 
-    init(root: URL, files: [String], git: GitStatus?, project: GitProject? = nil, fileIdentities: [String: AnyHashable] = [:]) {
+    init(root: URL, files: [String], git: GitStatus?, project: GitProject? = nil, fileIdentities: [String: AnyHashable] = [:],
+         searchableFiles: [String]? = nil, directories: [String] = [], deferredDirectories: Set<String> = []) {
         self.root = root; self.files = files; self.git = git; self.project = project
         self.fileIdentities = fileIdentities
+        self.searchableFiles = searchableFiles ?? files
+        self.directories = directories
+        self.deferredDirectories = deferredDirectories
     }
 
     var branch: String { git?.branch ?? "Folder" }
     var changes: [GitChange] { git?.changes ?? [] }
     var isGit: Bool { git != nil }
     var hasHead: Bool { git?.hasHead == true }
+
+    func isDeferredDirectory(_ path: String) -> Bool {
+        var prefix = ""
+        for part in path.split(separator: "/") {
+            prefix = prefix.isEmpty ? String(part) : prefix + "/" + part
+            if deferredDirectories.contains(prefix) { return true }
+        }
+        return false
+    }
 
     func renames(from previous: WorkspaceState) -> [String: String] {
         guard root == previous.root else { return [:] }

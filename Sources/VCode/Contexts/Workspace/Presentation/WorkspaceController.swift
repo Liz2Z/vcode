@@ -88,7 +88,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         projectSearch.onDismiss = { [weak self] in self?.showFiles() }
         projectSearch.onChoose = { [weak self] root, match in
             guard let self, self.session.state?.root == root, !self.session.isSwitching,
-                  self.session.state?.files.contains(match.path) == true else { return }
+                  self.session.state?.searchableFiles.contains(match.path) == true else { return }
             let editor = self.workspace.editor
             self.workspace.editorGroups.activate(editor, focus: true)
             self.openFile(match.path, diff: false, line: match.line, character: match.character, editor: editor, forceSource: true)
@@ -100,6 +100,15 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         workspace.explorer.onReveal = { [weak self] path in
             guard let url = try? self?.session.reader?.files.safeURL(path) else { return }
             NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+        workspace.explorer.loadDirectory = { [weak self] path in
+            guard let files = self?.session.reader?.files else { return [] }
+            return try files.children(in: path)
+        }
+        workspace.explorer.onLoadError = { [weak self] error in self?.workspace.status.message.stringValue = error.localizedDescription }
+        workspace.explorer.onExpandedDirectoriesChange = { [weak self] paths in
+            self?.session.inspectedDirectories = paths
+            self?.scheduleReadingSave()
         }
         workspace.editorGroups.editors.forEach(configureEditor)
         workspace.editorGroups.onEditorAdded = { [weak self] editor in self?.configureEditor(editor); self?.scheduleReadingSave() }
@@ -190,8 +199,8 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         }
         let renames = previous.map { state.renames(from: $0) } ?? [:]
         history.renameFiles(renames, in: state.root)
-        projectSearch.setWorkspace(root: state.root, paths: state.files)
-        quickOpen?.update(paths: state.files, recent: history.recentFiles(in: state.root))
+        projectSearch.setWorkspace(root: state.root, paths: state.searchableFiles)
+        quickOpen?.update(paths: state.searchableFiles, recent: history.recentFiles(in: state.root))
         let renamedActive = workspace.editor.activePath.map { renames[$0] != nil } ?? false
         for editor in workspace.editorGroups.editors {
             editor.allowsNavigation = true
@@ -424,7 +433,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         let editor = editor ?? workspace.editor
         inspectToken = UUID()
         inspection.dismiss()
-        if state.files.contains(path) { history.recordFile(path, in: state.root) }
+        if state.searchableFiles.contains(path) { history.recordFile(path, in: state.root) }
         editor.prepare(path: path, diff: diff, isGit: state.isGit, comparison: comparison, restoring: location, recordNavigation: location == nil, forceSource: forceSource)
         refreshLanguageStatus()
         loadFile(path, diff: editor.showingDiff, comparison: comparison, position: line.map { ($0, character) }, highlightDestination: highlightDestination, editor: editor)
@@ -564,7 +573,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         dismissShortcuts()
         dismissCodeHover(); picker?.close(); pickerRequest = UUID()
         if let quickOpen { view.window?.makeFirstResponder(quickOpen.filter); quickOpen.filter.selectText(nil); return }
-        let controller = QuickOpenPicker(paths: state.files, recent: history.recentFiles(in: state.root))
+        let controller = QuickOpenPicker(paths: state.searchableFiles, recent: history.recentFiles(in: state.root))
         let editor = workspace.editor
         addChild(controller); workspace.add(controller.view)
         let width = controller.view.widthAnchor.constraint(equalToConstant: 760); width.priority = .defaultHigh
@@ -581,7 +590,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         controller.onChoose = { [weak self, weak editor] path in
             guard let self, let editor, self.session.state?.root == state.root,
                   self.workspace.editorGroups.editors.contains(where: { $0 === editor }),
-                  self.session.state?.files.contains(path) == true else { return }
+                  self.session.state?.searchableFiles.contains(path) == true else { return }
             self.dismissQuickOpen(); self.workspace.editorGroups.activate(editor, focus: true)
             self.view.window?.makeFirstResponder(editor)
             self.openFile(path, diff: false, editor: editor)

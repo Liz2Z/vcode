@@ -106,7 +106,8 @@ final class GitServiceTests: XCTestCase {
         let service = GitService(root: folder)
         XCTAssertEqual(try service.ignoredPaths(), [ignored])
         let state = try WorkspaceReader(folder: folder).load()
-        XCTAssertEqual(Set(state.files), [".gitignore", tracked, "src/visible.ts"])
+        XCTAssertEqual(Set(state.files), [".gitignore", ignored, tracked, "src/visible.ts"])
+        XCTAssertEqual(Set(state.searchableFiles), [".gitignore", tracked, "src/visible.ts"])
     }
 
     func testStatusIncludesBranchMetadataForInitialUnicodeAndDetachedStates() throws {

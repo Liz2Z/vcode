@@ -62,6 +62,9 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     let filter = Theme.searchField()
     var onSelect: ((String, GitComparison?) -> Void)?
     var onReveal: ((String) -> Void)?
+    var loadDirectory: ((String) throws -> [FileTreeEntry])?
+    var onLoadError: ((Error) -> Void)?
+    var onExpandedDirectoriesChange: ((Set<String>) -> Void)?
     private let root = FileNode(name: "", path: "", directory: true)
     private var rebuilding = false
     private var state: WorkspaceState?
@@ -137,7 +140,12 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
 
     func show(_ state: WorkspaceState, changesOnly: Bool) {
         let switching = self.changesOnly != changesOnly || self.state?.root != state.root
-        let unchanged = !switching && self.state?.files == state.files && self.state?.changes == state.changes && appliedQuery == filter.stringValue
+        let readingDeferredFolder = !changesOnly && nodes.values.contains {
+            $0.directory && state.isDeferredDirectory($0.path) && outline.isItemExpanded($0)
+        }
+        let unchanged = !switching && !readingDeferredFolder && self.state?.files == state.files
+            && self.state?.directories == state.directories && self.state?.deferredDirectories == state.deferredDirectories
+            && self.state?.searchableFiles == state.searchableFiles && self.state?.changes == state.changes && appliedQuery == filter.stringValue
         self.state = state
         self.changesOnly = changesOnly
         heading.stringValue = changesOnly ? "CHANGES" : "FILES"
@@ -198,11 +206,11 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
             let sourceKey = key(change.path, comparison: nil)
             if changes[sourceKey] == nil || change.comparison == .unstaged { changes[sourceKey] = change }
         }
-        let allPaths = changesOnly ? state.changes.map(\.path) : state.files
+        let allPaths = changesOnly ? state.changes.map(\.path) : (query.isEmpty ? state.files + state.directories.map { $0 + "/" } : state.searchableFiles)
         let paths = query.isEmpty ? allPaths : allPaths.filter { $0.localizedCaseInsensitiveContains(query) }
         index = FileTreeIndex(paths: changesOnly ? [] : paths)
         rebuilding = true
-        defer { rebuilding = false }
+        defer { rebuilding = false; notifyExpandedDirectories() }
         nodes = [:]
         sectionIndexes = [:]
         sectionCounts = [:]
@@ -234,7 +242,8 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         if let selection, let node = nodes[selection], outline.row(forItem: node) >= 0 {
             outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: node)), byExtendingSelection: false)
         }
-        count.stringValue = "\(paths.count)"
+        count.stringValue = changesOnly || !query.isEmpty ? "\(paths.count)" : "\(state.files.count)" + (state.deferredDirectories.isEmpty ? "" : "+")
+        count.toolTip = !changesOnly && query.isEmpty && !state.deferredDirectories.isEmpty ? "More files are available in collapsed folders." : nil
         emptyLabel.stringValue = query.isEmpty ? (changesOnly ? "This folder isn’t a Git repository" : "This folder is empty") : "No matching files"
         emptyLabel.isHidden = !paths.isEmpty || (changesOnly && state.isGit)
     }
@@ -242,7 +251,12 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     private func children(of parent: FileNode) -> [FileNode] {
         if let children = parent.children { return children }
         let activeIndex = parent.comparison.flatMap { sectionIndexes[$0] } ?? index
-        let children = activeIndex.children(in: parent.path).map { entry -> FileNode in
+        let entries: [FileTreeEntry]
+        if !changesOnly, appliedQuery.isEmpty, state?.isDeferredDirectory(parent.path) == true, let loadDirectory {
+            do { entries = try loadDirectory(parent.path) }
+            catch { onLoadError?(error); entries = [] }
+        } else { entries = activeIndex.children(in: parent.path) }
+        let children = entries.map { entry -> FileNode in
             let node = FileNode(name: entry.name, path: entry.path, directory: entry.directory, comparison: parent.comparison)
             node.change = changes[node.identity]
             nodes[node.identity] = node
@@ -266,7 +280,7 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     func select(_ path: String, comparison: GitComparison? = nil) {
         let previous = rebuilding
         rebuilding = true
-        defer { rebuilding = previous }
+        defer { rebuilding = previous; if !previous { notifyExpandedDirectories() } }
         let scope = changesOnly ? (comparison ?? .unstaged) : nil
         var target = scope.flatMap { nodes[key("", comparison: $0)] } ?? root
         if target !== root { outline.expandItem(target) }
@@ -294,6 +308,22 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int { children(of: (item as? FileNode) ?? root).count }
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { children(of: (item as? FileNode) ?? root)[index] }
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { (item as? FileNode)?.directory == true }
+    func outlineView(_ outlineView: NSOutlineView, shouldExpandItem item: Any) -> Bool {
+        if !rebuilding, !changesOnly, appliedQuery.isEmpty, let node = item as? FileNode, state?.isDeferredDirectory(node.path) == true {
+            // Reopening an ignored folder must see its current disk contents.
+            for identity in nodes.keys.filter({ $0.hasPrefix(node.identity + "/") }) { nodes.removeValue(forKey: identity) }
+            node.children = nil
+        }
+        return true
+    }
+    func outlineViewItemDidExpand(_ notification: Notification) { if !rebuilding { notifyExpandedDirectories() } }
+    func outlineViewItemDidCollapse(_ notification: Notification) { if !rebuilding { notifyExpandedDirectories() } }
+    private func notifyExpandedDirectories() {
+        let paths = changesOnly || !appliedQuery.isEmpty ? [] : nodes.values.filter {
+            $0.directory && state?.isDeferredDirectory($0.path) == true && outline.row(forItem: $0) >= 0 && outline.isItemExpanded($0)
+        }.map(\.path)
+        onExpandedDirectoriesChange?(Set(paths))
+    }
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool { true }
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? FileNode else { return nil }

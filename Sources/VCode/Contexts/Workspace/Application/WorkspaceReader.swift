@@ -20,7 +20,8 @@ final class WorkspaceReader {
         let status = try git.status()
         let ignored = status == nil ? Set<String>() : try git.ignoredPaths()
         let listing = try files.listing(excluding: ignored)
-        return WorkspaceState(root: root, files: listing.paths, git: status, project: project, fileIdentities: listing.identities)
+        return WorkspaceState(root: root, files: listing.paths, git: status, project: project, fileIdentities: listing.identities,
+                              searchableFiles: listing.searchablePaths, directories: listing.directories, deferredDirectories: listing.deferredDirectories)
     }
 
     func snapshot(path: String, state: WorkspaceState, compare: Bool, comparison: GitComparison = .workingTree) throws -> FileSnapshot {

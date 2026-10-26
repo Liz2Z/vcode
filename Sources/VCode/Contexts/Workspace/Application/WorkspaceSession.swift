@@ -14,6 +14,8 @@ final class WorkspaceSession {
     private var refreshing = false
     private var refreshAgain = false
     private(set) var isSwitching = false
+    var inspectedDirectories: Set<String> = []
+    private var openedFiles: Set<String> = []
 
     func open(_ folder: URL, completion: ((Result<WorkspaceState, Error>) -> Void)? = nil) {
         generation = UUID()
@@ -24,6 +26,7 @@ final class WorkspaceSession {
         refreshing = false
         refreshAgain = false
         isSwitching = false
+        inspectedDirectories = []; openedFiles = []
         let token = generation
         queue.async { [weak self] in
             let result = Result { let reader = try WorkspaceReader(folder: folder); return (reader, try reader.load()) }
@@ -65,6 +68,7 @@ final class WorkspaceSession {
 
     func read(_ path: String, diff: Bool, comparison: GitComparison = .workingTree, scope: UUID? = nil, completion: @escaping (Result<FileSnapshot, Error>) -> Void) {
         guard let reader, let state, !isSwitching else { return }
+        openedFiles.insert(path)
         let scope = scope ?? defaultDocumentScope
         let token = UUID()
         documentGenerations[scope] = token
@@ -115,6 +119,7 @@ final class WorkspaceSession {
                 self.isSwitching = false
                 switch result {
                 case .success(let (target, state)):
+                    self.inspectedDirectories = []; self.openedFiles = []
                     self.reader = target
                     self.state = state
                     self.watch(state)
@@ -129,7 +134,10 @@ final class WorkspaceSession {
         }
     }
     private func watch(_ state: WorkspaceState) {
-        watcher = FolderWatcher(root: state.root, additionalRoots: state.project.map { [$0.commonDirectory] } ?? []) { [weak self] in self?.refresh() }
+        watcher = FolderWatcher(root: state.root, additionalRoots: state.project.map { [$0.commonDirectory] } ?? [],
+                                visibleDirectories: { [weak self] in self?.inspectedDirectories ?? [] },
+                                openedFiles: { [weak self] in self?.openedFiles ?? [] },
+                                deferredDirectories: { [weak self] in self?.state?.deferredDirectories ?? [] }) { [weak self] in self?.refresh() }
     }
     func close() {
         generation = UUID()
@@ -140,6 +148,7 @@ final class WorkspaceSession {
         refreshing = false
         refreshAgain = false
         isSwitching = false
+        inspectedDirectories = []; openedFiles = []
     }
     deinit { watcher = nil }
 }

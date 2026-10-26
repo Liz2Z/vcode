@@ -16,6 +16,8 @@ struct FileTreeIndex {
         var result: [FileTreeEntry] = []
         while index < paths.count, paths[index].hasPrefix(prefix) {
             let suffix = paths[index].dropFirst(prefix.count)
+            // A trailing-slash marker represents this folder, not a child file.
+            if suffix.isEmpty { index += 1; continue }
             if let slash = suffix.firstIndex(of: "/") {
                 let name = String(suffix[..<slash])
                 let path = prefix + name

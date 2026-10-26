@@ -5,6 +5,53 @@ import XCTest
 final class CodeViewportTests: XCTestCase {
     override func setUp() { _ = NSApplication.shared }
 
+    func testFractionalDiffScrollingDoesNotPaintLineNumbersIntoFixedHeader() throws {
+        let editor = EditorView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 540), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = editor
+        window.setContentSize(NSSize(width: 1280, height: 540))
+        editor.layoutSubtreeIfNeeded()
+        defer { withExtendedLifetime(window) {} }
+        let rows = (1...400).map { (number: Int) in
+            DiffRow(left: CodeLine(number: number, text: "export const entry\(number) = 1;", kind: .removed),
+                    right: CodeLine(number: number, text: "export const entry\(number) = 2;", kind: .added))
+        }
+        editor.prepare(path: "boundary.ts", diff: true, isGit: true)
+        editor.show(FileSnapshot(path: "boundary.ts", before: "old", after: "new", rows: rows, message: nil, isBinary: false), diff: true, preserveScroll: false)
+        editor.layoutSubtreeIfNeeded()
+        for pane in [editor.left, editor.right] {
+            if let container = pane.text.textContainer { pane.text.layoutManager?.ensureLayout(for: container) }
+        }
+
+        func headerPixels(_ pane: CodePane) throws -> [UInt8] {
+            let bitmap = try XCTUnwrap(pane.bitmapImageRepForCachingDisplay(in: pane.bounds))
+            pane.cacheDisplay(in: pane.bounds, to: bitmap)
+            let scaleX = CGFloat(bitmap.pixelsWide) / pane.bounds.width
+            let scaleY = CGFloat(bitmap.pixelsHigh) / pane.bounds.height
+            let firstY = Int((pane.bounds.maxY - pane.scroll.frame.maxY - 7) * scaleY)
+            let endY = Int((pane.bounds.maxY - pane.scroll.frame.maxY - 1) * scaleY)
+            var pixels: [UInt8] = []
+            for y in firstY..<endY {
+                for x in 0..<Int(55 * scaleX) {
+                    let color = try XCTUnwrap(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                    pixels += [color.redComponent, color.greenComponent, color.blueComponent].map { UInt8(round($0 * 255)) }
+                }
+            }
+            return pixels
+        }
+        let initial = try [editor.left, editor.right].map(headerPixels)
+        for y: CGFloat in [2380, 2387.5, 2391, 2402.5] {
+            let clip = editor.right.scroll.contentView
+            clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
+            editor.right.scroll.reflectScrolledClipView(clip)
+            editor.layoutSubtreeIfNeeded()
+            XCTAssertEqual(editor.left.scroll.contentView.bounds.minY, clip.bounds.minY, accuracy: 0.1)
+            for (index, pane) in [editor.left, editor.right].enumerated() {
+                XCTAssertTrue(try headerPixels(pane) == initial[index], "Scrolling to \(y) must leave the fixed header untouched")
+            }
+        }
+    }
+
     func testOpeningAndReopeningShortJSONShowsOpeningBraceAndFirstKey() throws {
         let editor = EditorView()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 540), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)

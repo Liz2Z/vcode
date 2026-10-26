@@ -48,6 +48,9 @@ final class SourceFileStore {
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileResourceIdentifierKey]
         guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: Array(keys)) else { return FileListing(paths: [], identities: [:]) }
         var files: [String] = []
+        var searchable: [String] = []
+        var directories: [String] = []
+        var deferred: Set<String> = []
         var identities: [String: AnyHashable] = [:]
         // DirectoryEnumerator emits physical /private/var URLs even when
         // Foundation normalizes the root to /var. Resolve that prefix once.
@@ -65,9 +68,18 @@ final class SourceFileStore {
             let resource: URLResourceValues
             do { resource = try url.resourceValues(forKeys: keys) }
             catch CocoaError.fileReadNoSuchFile { continue }
-            if ignored.contains(url.lastPathComponent) || paths.contains(path) || paths.contains(path + "/") {
+            if url.lastPathComponent == ".git" {
                 // On a regular file, skipDescendants can skip the next directory.
                 if resource.isDirectory == true { enumerator.skipDescendants() }
+                continue
+            }
+            let excluded = ignored.contains(url.lastPathComponent) || paths.contains(path) || paths.contains(path + "/")
+            if resource.isDirectory == true && resource.isSymbolicLink != true {
+                directories.append(path)
+                if excluded {
+                    deferred.insert(path)
+                    enumerator.skipDescendants()
+                }
                 continue
             }
             // DirectoryEnumerator does not follow symbolic links. Calling
@@ -76,10 +88,27 @@ final class SourceFileStore {
                 // root is already canonical and links are never traversed, so
                 // there is no need to resolve every file's parent again.
                 files.append(path)
+                if !excluded { searchable.append(path) }
                 if let identity = resource.fileResourceIdentifier as? AnyHashable { identities[path] = identity }
             }
         }
-        return FileListing(paths: files.sorted(), identities: identities)
+        return FileListing(paths: files.sorted(), identities: identities, directories: directories.sorted(),
+                           deferredDirectories: deferred, searchablePaths: searchable.sorted())
     }
 
+    // Read only one requested level; never descend into dependency/build trees.
+    func children(in directory: String) throws -> [FileTreeEntry] {
+        let url = directory.isEmpty ? root : try self.url(for: directory)
+        let metadata = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard metadata.isDirectory == true, metadata.isSymbolicLink != true else { throw FileAccessError.invalidPath }
+        return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]).compactMap { child in
+            guard child.lastPathComponent != ".git" else { return nil }
+            let resource: URLResourceValues
+            do { resource = try child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) }
+            catch CocoaError.fileReadNoSuchFile { return nil }
+            return FileTreeEntry(name: child.lastPathComponent,
+                                 path: directory.isEmpty ? child.lastPathComponent : directory + "/" + child.lastPathComponent,
+                                 directory: resource.isDirectory == true && resource.isSymbolicLink != true)
+        }.sorted { $0.directory == $1.directory ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : $0.directory }
+    }
 }

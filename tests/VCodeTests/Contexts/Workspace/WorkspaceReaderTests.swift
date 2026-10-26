@@ -135,7 +135,7 @@ final class WorkspaceReaderTests: XCTestCase {
         try write(".git", "gitdir: /nonexistent/fixture\n")
         try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("src/alias"), withDestinationURL: folder.appendingPathComponent("src/auth"))
         let paths = try FileBrowser(root: folder).list()
-        XCTAssertEqual(Set(paths), ["src/alias", "src/auth/request.ts", "src/biz-groups/index.ts", "src/shared/index.ts"])
+        XCTAssertEqual(Set(paths), ["src/.DS_Store", "src/alias", "src/auth/request.ts", "src/biz-groups/index.ts", "src/shared/index.ts"])
         XCTAssertFalse(paths.contains { $0.hasPrefix("src/alias/") }, "Directory links must not be traversed")
     }
 
@@ -147,10 +147,10 @@ final class WorkspaceReaderTests: XCTestCase {
         try write("src/visible.ts", "visible\n")
         try git(["add", "-f", "cache/nested/keep.ts"])
         let reader = try WorkspaceReader(folder: folder)
-        XCTAssertEqual(Set(try reader.load().files), [".gitignore", "cache/nested/keep.ts", "src/visible.ts"])
+        XCTAssertEqual(Set(try reader.load().searchableFiles), [".gitignore", "cache/nested/keep.ts", "src/visible.ts"])
         // Refresh must evaluate changed ignore rules rather than reuse old ones.
         try write(".gitignore", "cache/\n")
-        XCTAssertEqual(Set(try reader.load().files), [".gitignore", "cache/nested/keep.ts", "src/visible.ts", "src/generated/ignored.ts"])
+        XCTAssertEqual(Set(try reader.load().searchableFiles), [".gitignore", "cache/nested/keep.ts", "src/visible.ts", "src/generated/ignored.ts"])
     }
 
     func testRepeatedDiffReadsInvalidateOnActualSourceAndIndexContentChanges() throws {

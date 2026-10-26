@@ -8,9 +8,14 @@ final class FolderWatcher {
     private let onChange: () -> Void
     private let rootPath: String
     private let metadataPaths: [String]
+    private let visibleDirectories: () -> Set<String>
+    private let openedFiles: () -> Set<String>
+    private let deferredDirectories: () -> Set<String>
 
-    init(root: URL, additionalRoots: [URL] = [], onChange: @escaping () -> Void) {
+    init(root: URL, additionalRoots: [URL] = [], visibleDirectories: @escaping () -> Set<String> = { [] },
+         openedFiles: @escaping () -> Set<String> = { [] }, deferredDirectories: @escaping () -> Set<String> = { [] }, onChange: @escaping () -> Void) {
         self.onChange = onChange
+        self.visibleDirectories = visibleDirectories; self.openedFiles = openedFiles; self.deferredDirectories = deferredDirectories
         rootPath = Self.physicalPath(root)
         metadataPaths = additionalRoots.map(Self.physicalPath)
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
@@ -46,8 +51,16 @@ final class FolderWatcher {
             return relative.isEmpty || ["HEAD", "index", "refs", "packed-refs", "config", "worktrees"].contains(String(relative[0]))
         }
         guard path == rootPath || path.hasPrefix(rootPath + "/") else { return false }
-        let relative = String(path.dropFirst(rootPath.count)).split(separator: "/").map(String.init)
-        return !relative.contains(where: { ["node_modules", ".build", ".swiftpm", "dist", "build", ".DS_Store"].contains($0) })
+        let relative = String(path.dropFirst(rootPath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let visible = visibleDirectories()
+        if openedFiles().contains(relative) || visible.contains(relative) || visible.contains((relative as NSString).deletingLastPathComponent) { return true }
+        // Observe creation/removal of a deferred root itself, but not writes
+        // deep inside an unopened dependency or generated folder.
+        for directory in deferredDirectories() {
+            if relative == directory { return true }
+            if relative.hasPrefix(directory + "/") { return false }
+        }
+        return !relative.split(separator: "/").dropLast().contains(where: { ["node_modules", ".build", ".swiftpm", "dist", "build"].contains(String($0)) })
     }
 
     private static func physicalPath(_ url: URL) -> String {
