@@ -135,8 +135,42 @@ final class WorkspaceReaderTests: XCTestCase {
         try write(".git", "gitdir: /nonexistent/fixture\n")
         try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("src/alias"), withDestinationURL: folder.appendingPathComponent("src/auth"))
         let paths = try FileBrowser(root: folder).list()
-        XCTAssertEqual(Set(paths), ["src/.DS_Store", "src/alias", "src/auth/request.ts", "src/biz-groups/index.ts", "src/shared/index.ts"])
+        XCTAssertEqual(Set(paths), ["src/alias", "src/auth/request.ts", "src/biz-groups/index.ts", "src/shared/index.ts"])
         XCTAssertFalse(paths.contains { $0.hasPrefix("src/alias/") }, "Directory links must not be traversed")
+    }
+
+    func testSystemMetadataStaysHiddenWhileSwapFilesRemainVisibleAndStageable() throws {
+        let visible = [".env.local", ".gitignore", ".vscode/settings.json", "src/main.ts", "src/notes.swp.md",
+                       "AGENTS.md.swp", ".draft.swo", ".draft.swn", "src/AGENTS.md.swp"]
+        let artifacts = [".DS_Store", "._main.ts", "src/.DS_Store", ".AppleDouble/resource", "__MACOSX/resource", ".Spotlight-V100/index"]
+        for path in visible + artifacts { try write(path, "initial\n") }
+        try write(".gitignore", "cache/\n")
+        try git(["add", "-f", "--"] + visible + artifacts)
+        try git(["commit", "-qm", "tracked files and metadata"])
+        for path in artifacts + ["src/main.ts", "AGENTS.md.swp"] { try write(path, "changed\n") }
+        try write("cache/.DS_Store", "metadata\n")
+        try write("cache/source.ts.swp", "swap\n")
+        try write("cache/source.ts", "ignored but visible\n")
+        let reader = try WorkspaceReader(folder: folder)
+        var state = try reader.load()
+        XCTAssertEqual(Set(state.files), Set(visible))
+        XCTAssertEqual(Set(state.searchableFiles), Set(visible))
+        XCTAssertEqual(Set(state.directories), [".vscode", "src", "cache"])
+        XCTAssertEqual(Set(try reader.files.children(in: "src").map(\.name)), ["AGENTS.md.swp", "main.ts", "notes.swp.md"])
+        XCTAssertEqual(Set(try reader.files.children(in: "cache").map(\.name)), ["source.ts", "source.ts.swp"])
+        XCTAssertEqual(Set(state.changes.map(\.path)), ["AGENTS.md.swp", "src/main.ts"])
+        XCTAssertTrue(state.git?.changes.contains { $0.path == ".DS_Store" } == true, "Raw Git status remains complete")
+        try reader.git.updateIndex(.stage, target: .all)
+        state = try reader.load()
+        XCTAssertEqual(state.changes.map(\.comparison), [.staged, .staged])
+        XCTAssertEqual(Set(state.git?.changes.filter { $0.comparison == .staged }.map(\.path) ?? []), ["AGENTS.md.swp", "src/main.ts"])
+        XCTAssertEqual(try String(contentsOf: folder.appendingPathComponent(".DS_Store"), encoding: .utf8), "changed\n")
+        // Unstaging visible files must not silently unstage hidden, preexisting index entries.
+        try git(["add", "-f", ".DS_Store"])
+        try reader.git.updateIndex(.unstage, target: .all)
+        state = try reader.load()
+        XCTAssertEqual(state.changes.map(\.comparison), [.unstaged, .unstaged])
+        XCTAssertTrue(state.git?.changes.contains { $0.path == ".DS_Store" && $0.comparison == .staged } == true)
     }
 
     func testIgnoredSubtreesArePrunedWithoutHidingTrackedFilesOrNewIgnoreRules() throws {

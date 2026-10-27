@@ -129,6 +129,7 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     private(set) var isIndexBusy = false
     var onSelect: ((String, GitComparison?) -> Void)?
     var onReveal: ((String) -> Void)?
+    var pathPasteboard: NSPasteboard = .general
     var loadDirectory: ((String) throws -> [FileTreeEntry])?
     var onLoadError: ((Error) -> Void)?
     var onExpandedDirectoriesChange: ((Set<String>) -> Void)?
@@ -170,11 +171,7 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         outline.action = #selector(activateRow)
         outline.intercellSpacing = NSSize(width: 0, height: 0)
         outline.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        let menu = NSMenu()
-        let revealItem = NSMenuItem(title: "Reveal in Finder", action: #selector(revealFile), keyEquivalent: "")
-        revealItem.target = self
-        menu.addItem(revealItem)
-        outline.menu = menu
+        outline.onContextMenu = { [weak self] node in self?.contextMenu(for: node) }
         let scroll = NSScrollView()
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
@@ -448,9 +445,29 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         if !outline.isHandlingMouse { activateRow() }
     }
     func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? { SelectionRowView() }
-    @objc private func revealFile() {
-        let row = outline.clickedRow >= 0 ? outline.clickedRow : outline.selectedRow
-        guard let node = outline.item(atRow: row) as? FileNode, !node.isSection else { return }
-        onReveal?(node.path)
+    private func contextMenu(for node: FileNode) -> NSMenu? {
+        guard let state, !node.isSection, !node.path.isEmpty else { return nil }
+        let menu = NSMenu()
+        for (title, path, action) in [
+            ("Copy Relative Path", node.path, #selector(copyPath(_:))),
+            ("Copy Absolute Path", state.root.appendingPathComponent(node.path).path, #selector(copyPath(_:))),
+            ("Reveal in Finder", node.path, #selector(revealFile(_:)))
+        ] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self; item.representedObject = path
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func copyPath(_ item: NSMenuItem) {
+        guard let path = item.representedObject as? String else { return }
+        pathPasteboard.clearContents()
+        pathPasteboard.setString(path, forType: .string)
+    }
+
+    @objc private func revealFile(_ item: NSMenuItem) {
+        guard let path = item.representedObject as? String else { return }
+        onReveal?(path)
     }
 }

@@ -5,6 +5,61 @@ import XCTest
 final class FileTreeTests: XCTestCase {
     override func setUp() { _ = NSApplication.shared }
 
+    func testPathMenusTargetClickedRowsWithoutChangingSelectionOrExpansion() throws {
+        let tree = FileTree()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 700), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = tree
+        defer { withExtendedLifetime(window) {} }
+        let pasteboard = NSPasteboard.withUniqueName()
+        tree.pathPasteboard = pasteboard
+        defer { pasteboard.releaseGlobally() }
+        let path = "src/中文 file.ts"
+        var opened: [String] = []
+        var revealed: [String] = []
+        tree.onSelect = { path, _ in opened.append(path) }
+        tree.onReveal = { revealed.append($0) }
+
+        func menu(at row: Int) throws -> NSMenu? {
+            let y = row < tree.outline.numberOfRows ? tree.outline.rect(ofRow: row).midY : tree.outline.rect(ofRow: tree.outline.numberOfRows - 1).maxY + 30
+            let point = tree.outline.convert(NSPoint(x: 120, y: y), to: nil)
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+            return tree.outline.menu(for: event)
+        }
+        for changesOnly in [false, true] {
+            let root = URL(fileURLWithPath: changesOnly ? "/tmp/another worktree 中文" : "/tmp/original project 中文")
+            let changes = [GitChange(path: path, kind: .modified, comparison: .staged), GitChange(path: "src/deleted.ts", kind: .deleted, comparison: .unstaged), GitChange(path: "other.ts", kind: .modified, comparison: .unstaged)]
+            tree.show(WorkspaceState(root: root, files: [path, "other.ts"], git: GitStatus(root: root, branch: "main", changes: changes, hasHead: true)), changesOnly: changesOnly)
+            tree.outline.expandItem(nil, expandChildren: true)
+            tree.layoutSubtreeIfNeeded()
+            tree.select("other.ts", comparison: changesOnly ? .unstaged : nil)
+            let selected = tree.outline.selectedRow
+            let targets = changesOnly ? ["src", path, "src/deleted.ts"] : ["src", path]
+            for target in targets {
+                let row = try XCTUnwrap((0..<tree.outline.numberOfRows).first { (tree.outline.item(atRow: $0) as? FileNode)?.path == target })
+                let node = try XCTUnwrap(tree.outline.item(atRow: row) as? FileNode)
+                let expanded = tree.outline.isItemExpanded(node)
+                let contextMenu = try XCTUnwrap(menu(at: row))
+                XCTAssertEqual(contextMenu.items.map(\.title), ["Copy Relative Path", "Copy Absolute Path", "Reveal in Finder"])
+                for (index, expected) in [(0, target), (1, root.appendingPathComponent(target).path)] {
+                    let item = contextMenu.items[index]
+                    XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
+                    XCTAssertEqual(pasteboard.string(forType: .string), expected)
+                }
+                let reveal = contextMenu.items[2]
+                XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(reveal.action), to: reveal.target, from: reveal))
+                XCTAssertEqual(revealed.last, target)
+                XCTAssertEqual(tree.outline.selectedRow, selected)
+                XCTAssertEqual(tree.outline.isItemExpanded(node), expanded)
+                XCTAssertTrue(opened.isEmpty)
+                tree.outline.isEnabled = false
+                XCTAssertNil(try menu(at: row))
+                tree.outline.isEnabled = true
+            }
+            if changesOnly { XCTAssertNil(try menu(at: 0), "Group headings have no file path") }
+            XCTAssertNil(try menu(at: tree.outline.numberOfRows + 2), "Blank space must not reuse the selected file")
+        }
+    }
+
     func testDeletedNamesAreStruckOnlyInTheirDeletedComparisonAndResetAfterRefresh() throws {
         let tree = FileTree()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)

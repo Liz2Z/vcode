@@ -44,7 +44,7 @@ final class SourceFileStore {
     }
 
     func listing(excluding paths: Set<String> = []) throws -> FileListing {
-        let ignored: Set<String> = [".git", "node_modules", ".build", ".swiftpm", "dist", "build", ".DS_Store"]
+        let ignored: Set<String> = ["node_modules", ".build", ".swiftpm", "dist", "build"]
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileResourceIdentifierKey]
         guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: Array(keys)) else { return FileListing(paths: [], identities: [:]) }
         var files: [String] = []
@@ -68,9 +68,9 @@ final class SourceFileStore {
             let resource: URLResourceValues
             do { resource = try url.resourceValues(forKeys: keys) }
             catch CocoaError.fileReadNoSuchFile { continue }
-            if url.lastPathComponent == ".git" {
+            if !ProjectFileVisibility.isVisible(path) {
                 // On a regular file, skipDescendants can skip the next directory.
-                if resource.isDirectory == true { enumerator.skipDescendants() }
+                if resource.isDirectory == true && resource.isSymbolicLink != true { enumerator.skipDescendants() }
                 continue
             }
             let excluded = ignored.contains(url.lastPathComponent) || paths.contains(path) || paths.contains(path + "/")
@@ -102,7 +102,7 @@ final class SourceFileStore {
         let metadata = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
         guard metadata.isDirectory == true, metadata.isSymbolicLink != true else { throw FileAccessError.invalidPath }
         return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]).compactMap { child in
-            guard child.lastPathComponent != ".git" else { return nil }
+            guard ProjectFileVisibility.isVisible(child.lastPathComponent) else { return nil }
             let resource: URLResourceValues
             do { resource = try child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) }
             catch CocoaError.fileReadNoSuchFile { return nil }

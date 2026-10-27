@@ -1,6 +1,20 @@
 import AppKit
 
 final class FileOutlineView: NSOutlineView {
+    var onContextMenu: ((FileNode) -> NSMenu?)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        guard isEnabled, visibleRect.contains(point), let node = item(atRow: row(at: point)) as? FileNode else { return nil }
+        return onContextMenu?(node)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard let menu = menu(for: event) else { return }
+        // Context actions must not open another file or toggle a folder.
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
     override var isEnabled: Bool {
         didSet {
             enumerateAvailableRowViews { _, row in

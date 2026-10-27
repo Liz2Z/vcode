@@ -5,6 +5,7 @@ struct WorkspaceState {
     let root: URL
     let files: [String]
     let git: GitStatus?
+    let changes: [GitChange]
     let project: GitProject?
     let fileIdentities: [String: AnyHashable]
     let searchableFiles: [String]
@@ -15,6 +16,7 @@ struct WorkspaceState {
     init(root: URL, files: [String], git: GitStatus?, project: GitProject? = nil, fileIdentities: [String: AnyHashable] = [:],
          searchableFiles: [String]? = nil, directories: [String] = [], deferredDirectories: Set<String> = [], ignoredPaths: Set<String> = []) {
         self.root = root; self.files = files; self.git = git; self.project = project
+        self.changes = git?.changes.filter { ProjectFileVisibility.isVisible($0.path) } ?? []
         self.fileIdentities = fileIdentities
         self.searchableFiles = searchableFiles ?? files
         self.directories = directories
@@ -23,7 +25,6 @@ struct WorkspaceState {
     }
 
     var branch: String { git?.branch ?? "Folder" }
-    var changes: [GitChange] { git?.changes ?? [] }
     var isGit: Bool { git != nil }
     var hasHead: Bool { git?.hasHead == true }
 
