@@ -39,13 +39,15 @@ final class FileTreeTests: XCTestCase {
                 let node = try XCTUnwrap(tree.outline.item(atRow: row) as? FileNode)
                 let expanded = tree.outline.isItemExpanded(node)
                 let contextMenu = try XCTUnwrap(menu(at: row))
-                XCTAssertEqual(contextMenu.items.map(\.title), ["Copy Relative Path", "Copy Absolute Path", "Reveal in Finder"])
+                XCTAssertEqual(contextMenu.items.map(\.title), changesOnly
+                    ? ["Copy Relative Path", "Copy Absolute Path", "Reveal in Files", "Reveal in Finder"]
+                    : ["Copy Relative Path", "Copy Absolute Path", "Reveal in Finder"])
                 for (index, expected) in [(0, target), (1, root.appendingPathComponent(target).path)] {
                     let item = contextMenu.items[index]
                     XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
                     XCTAssertEqual(pasteboard.string(forType: .string), expected)
                 }
-                let reveal = contextMenu.items[2]
+                let reveal = try XCTUnwrap(contextMenu.items.last)
                 XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(reveal.action), to: reveal.target, from: reveal))
                 XCTAssertEqual(revealed.last, target)
                 XCTAssertEqual(tree.outline.selectedRow, selected)
@@ -58,6 +60,85 @@ final class FileTreeTests: XCTestCase {
             if changesOnly { XCTAssertNil(try menu(at: 0), "Group headings have no file path") }
             XCTAssertNil(try menu(at: tree.outline.numberOfRows + 2), "Blank space must not reuse the selected file")
         }
+    }
+
+    func testChangesRevealMenuUsesClickedPathAvailabilityAndRejectsAnOldWorktreeMenu() throws {
+        let tree = FileTree()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 700), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = tree
+        defer { withExtendedLifetime(window) {} }
+        let root = URL(fileURLWithPath: "/tmp/reveal-menu-project")
+        let existing = "src/中文 file.ts"
+        let deleted = "src/deleted.ts"
+        let recreated = "src/recreated.ts"
+        let changes = [GitChange(path: existing, kind: .modified, comparison: .staged),
+                       GitChange(path: deleted, kind: .deleted, comparison: .unstaged),
+                       GitChange(path: recreated, kind: .deleted, comparison: .staged)]
+        var revealed: [String] = [], opened: [String] = []
+        tree.onRevealInFiles = { revealed.append($0) }
+        tree.onSelect = { path, _ in opened.append(path) }
+        func show(_ root: URL) {
+            tree.show(WorkspaceState(root: root, files: [existing, recreated], git: GitStatus(root: root, branch: "main", changes: changes, hasHead: true)), changesOnly: true)
+            tree.layoutSubtreeIfNeeded()
+        }
+        func action(_ path: String) throws -> NSMenuItem {
+            let node = try XCTUnwrap((0..<tree.outline.numberOfRows).compactMap { tree.outline.item(atRow: $0) as? FileNode }.first { $0.path == path })
+            let menu = try XCTUnwrap(tree.outline.onContextMenu?(node))
+            XCTAssertFalse(menu.autoenablesItems, "Native validation must not re-enable unavailable paths")
+            return try XCTUnwrap(menu.items.first { $0.title == "Reveal in Files" })
+        }
+        show(root)
+        tree.select(recreated, comparison: .staged)
+        let selected = tree.outline.selectedRow
+        let existingItem = try action(existing)
+        XCTAssertTrue(existingItem.isEnabled)
+        XCTAssertTrue(NSApp.sendAction(existingItem.action!, to: existingItem.target, from: existingItem))
+        XCTAssertEqual(revealed, [existing])
+        XCTAssertEqual(tree.outline.selectedRow, selected)
+        XCTAssertTrue(opened.isEmpty)
+        let deletedItem = try action(deleted)
+        XCTAssertFalse(deletedItem.isEnabled)
+        _ = NSApp.sendAction(deletedItem.action!, to: deletedItem.target, from: deletedItem)
+        XCTAssertEqual(revealed.count, 1)
+        XCTAssertTrue(try action(recreated).isEnabled, "A re-created disk file can be revealed even when its index entry is deleted")
+        let folder = try action("src")
+        XCTAssertTrue(folder.isEnabled)
+        _ = NSApp.sendAction(folder.action!, to: folder.target, from: folder)
+        XCTAssertEqual(revealed.last, "src")
+        tree.outline.isEnabled = false
+        _ = NSApp.sendAction(existingItem.action!, to: existingItem.target, from: existingItem)
+        XCTAssertEqual(revealed.count, 2)
+        tree.outline.isEnabled = true
+        show(URL(fileURLWithPath: "/tmp/reveal-menu-other-worktree"))
+        _ = NSApp.sendAction(existingItem.action!, to: existingItem.target, from: existingItem)
+        XCTAssertEqual(revealed.count, 2, "A retained menu must not send its path to another worktree")
+    }
+
+    func testRevealClearsFilesFilterAndLoadsOnlyTheRequiredIgnoredAncestors() throws {
+        let tree = FileTree()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 450), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = tree
+        defer { withExtendedLifetime(window) {} }
+        let root = URL(fileURLWithPath: "/tmp/reveal-lazy")
+        let target = "ignored/deep/中文 file.ts"
+        let state = WorkspaceState(root: root, files: ["other.ts"], git: nil, searchableFiles: ["other.ts"], directories: ["ignored"], deferredDirectories: ["ignored"])
+        var loaded: [String] = [], opened = 0
+        tree.loadDirectory = { path in
+            loaded.append(path)
+            if path == "ignored" { return [FileTreeEntry(name: "deep", path: "ignored/deep", directory: true), FileTreeEntry(name: "untouched", path: "ignored/untouched", directory: true)] }
+            if path == "ignored/deep" { return [FileTreeEntry(name: "中文 file.ts", path: target, directory: false)] }
+            XCTFail("Must not recursively load unrelated directories: " + path)
+            return []
+        }
+        tree.onSelect = { _, _ in opened += 1 }
+        tree.show(state, changesOnly: false)
+        tree.restoreSession(FileTreeReadingState(expanded: [], collapsed: [], selection: nil, query: "other", scrollOffset: 0))
+        XCTAssertTrue(tree.revealInFiles(target))
+        XCTAssertEqual(tree.filter.stringValue, "")
+        XCTAssertEqual((tree.outline.item(atRow: tree.outline.selectedRow) as? FileNode)?.path, target)
+        XCTAssertEqual(loaded, ["ignored", "ignored/deep"])
+        XCTAssertEqual(opened, 0, "Revealing a tree row must preserve the current editor")
+        XCTAssertFalse(tree.revealInFiles("missing.ts"))
     }
 
     func testDeletedNamesAreStruckOnlyInTheirDeletedComparisonAndResetAfterRefresh() throws {

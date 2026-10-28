@@ -25,7 +25,7 @@
     <array>
         <dict>
             <key>CFBundleTypeName</key><string>Source Code and Scripts</string>
-            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>CFBundleTypeRole</key><string>Editor</string>
             <key>LSHandlerRank</key><string>Alternate</string>
             <key>CFBundleTypeExtensions</key>
             <array>
@@ -44,7 +44,7 @@
         </dict>
         <dict>
             <key>CFBundleTypeName</key><string>Developer Configuration and Text</string>
-            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>CFBundleTypeRole</key><string>Editor</string>
             <key>LSHandlerRank</key><string>Alternate</string>
             <key>CFBundleTypeExtensions</key>
             <array>
@@ -58,7 +58,7 @@
         </dict>
         <dict>
             <key>CFBundleTypeName</key><string>Text Documents</string>
-            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>CFBundleTypeRole</key><string>Editor</string>
             <key>LSHandlerRank</key><string>Alternate</string>
             <key>LSItemContentTypes</key>
             <array><string>public.text</string><string>public.source-code</string><string>public.script</string></array>

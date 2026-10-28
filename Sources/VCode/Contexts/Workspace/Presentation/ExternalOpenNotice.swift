@@ -7,7 +7,7 @@ final class ExternalOpenNotice: NSView {
         let reason: String
     }
 
-    let surface = FloatingSurface()
+    let surface = GlassSurface(tintColor: nil, fallbackMaterial: .popover)
     let title = Theme.label("", size: 16, weight: .semibold)
     let reason = NSTextField(wrappingLabelWithString: "")
     let paths = Theme.label("", size: 11, color: Theme.muted)
@@ -21,6 +21,8 @@ final class ExternalOpenNotice: NSView {
         wantsLayer = true
         layer?.cornerRadius = Theme.Layout.panelRadius
         layer?.masksToBounds = true
+        surface.layer?.borderWidth = 1
+        Theme.setLayerColor(Theme.muted.withAlphaComponent(0.32), on: surface.layer, property: .border)
         setAccessibilityRole(.group)
         setAccessibilityLabel("File open error")
         let icon = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "Warning")!)
@@ -41,7 +43,7 @@ final class ExternalOpenNotice: NSView {
         closeButton.nextKeyView = confirmButton; confirmButton.nextKeyView = closeButton
         nextKeyView = confirmButton
         add(surface)
-        surface.add(icon, title, reason, paths, closeButton, confirmButton)
+        surface.content.add(icon, title, reason, paths, closeButton, confirmButton)
         let width = surface.widthAnchor.constraint(equalToConstant: 560); width.priority = .defaultHigh
         NSLayoutConstraint.activate([
             surface.centerXAnchor.constraint(equalTo: centerXAnchor), surface.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -63,10 +65,10 @@ final class ExternalOpenNotice: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func show(_ failures: [Failure], empty: Bool) {
+    func show(_ failures: [Failure], empty: Bool, title customTitle: String? = nil) {
         guard let first = failures.first else { return }
         Theme.fill(self, empty ? Theme.background : Theme.scrim)
-        title.stringValue = failures.count == 1 ? "Unable to open \(first.url.lastPathComponent)" : "Unable to open \(failures.count) files"
+        title.stringValue = customTitle ?? (failures.count == 1 ? "Unable to open \(first.url.lastPathComponent)" : "Unable to open \(failures.count) files")
         var reasons: [String] = []
         for failure in failures where !reasons.contains(failure.reason) { reasons.append(failure.reason) }
         reason.stringValue = reasons.joined(separator: " · ")

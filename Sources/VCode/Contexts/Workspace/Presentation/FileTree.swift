@@ -129,6 +129,8 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     private(set) var isIndexBusy = false
     var onSelect: ((String, GitComparison?) -> Void)?
     var onReveal: ((String) -> Void)?
+    var onRevealInFiles: ((String) -> Void)?
+    var canRevealInFiles: ((String) -> Bool)?
     var pathPasteboard: NSPasteboard = .general
     var loadDirectory: ((String) throws -> [FileTreeEntry])?
     var onLoadError: ((Error) -> Void)?
@@ -357,7 +359,8 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         return parent
     }
 
-    func select(_ path: String, comparison: GitComparison? = nil) {
+    @discardableResult
+    func select(_ path: String, comparison: GitComparison? = nil) -> Bool {
         let previous = rebuilding
         rebuilding = true
         defer { rebuilding = previous; if !previous { notifyExpandedDirectories() } }
@@ -367,12 +370,26 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         var accumulated = ""
         for component in path.split(separator: "/") {
             accumulated = accumulated.isEmpty ? String(component) : accumulated + "/" + component
-            guard let child = children(of: target).first(where: { $0.path == accumulated }) else { return }
+            guard let child = children(of: target).first(where: { $0.path == accumulated }) else { return false }
             if child.directory { outline.expandItem(child) }
             target = child
         }
         let row = outline.row(forItem: target)
-        if row >= 0 { outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false); outline.scrollRowToVisible(row) }
+        guard row >= 0 else { return false }
+        outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        outline.scrollRowToVisible(row)
+        return true
+    }
+
+    @discardableResult
+    func revealInFiles(_ path: String) -> Bool {
+        guard !changesOnly, outline.isEnabled else { return false }
+        filterWork?.cancel(); filterWork = nil
+        if !filter.stringValue.isEmpty {
+            filter.stringValue = ""
+            rebuild(reset: false)
+        }
+        return select(path)
     }
 
     private var selectedFile: FileNode? {
@@ -448,6 +465,7 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     private func contextMenu(for node: FileNode) -> NSMenu? {
         guard let state, !node.isSection, !node.path.isEmpty else { return nil }
         let menu = NSMenu()
+        menu.autoenablesItems = false
         for (title, path, action) in [
             ("Copy Relative Path", node.path, #selector(copyPath(_:))),
             ("Copy Absolute Path", state.root.appendingPathComponent(node.path).path, #selector(copyPath(_:))),
@@ -457,7 +475,32 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
             item.target = self; item.representedObject = path
             menu.addItem(item)
         }
+        if changesOnly {
+            let reveal = NSMenuItem(title: "Reveal in Files", action: #selector(viewInFiles(_:)), keyEquivalent: "")
+            reveal.target = self
+            reveal.representedObject = FilesRevealTarget(root: state.root, path: node.path)
+            reveal.isEnabled = onRevealInFiles != nil && isAvailableInFiles(node.path)
+            menu.insertItem(reveal, at: 2)
+        }
         return menu
+    }
+
+    private struct FilesRevealTarget {
+        let root: URL
+        let path: String
+    }
+
+    private func isAvailableInFiles(_ path: String) -> Bool {
+        if let canRevealInFiles { return canRevealInFiles(path) }
+        guard let state else { return false }
+        return state.files.contains(path) || state.directories.contains(path)
+            || state.files.contains { $0.hasPrefix(path + "/") }
+    }
+
+    @objc private func viewInFiles(_ item: NSMenuItem) {
+        guard outline.isEnabled, changesOnly, let target = item.representedObject as? FilesRevealTarget,
+              state?.root == target.root, isAvailableInFiles(target.path) else { return }
+        onRevealInFiles?(target.path)
     }
 
     @objc private func copyPath(_ item: NSMenuItem) {

@@ -4,6 +4,9 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     private let workspace = WorkspaceView()
     private let session = WorkspaceSession()
     private let language = LanguageService()
+    let sourceEdits: SourceEditStore
+    private var sourceDecisionSheet: DraftCloseSheet?
+    private var decidingSourceEdits = false
     private let inspection: InspectionPresenter
     private var changesOnly = false
     private var inspectToken = UUID()
@@ -38,9 +41,10 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     private weak var shortcutPreviousFocus: NSView?
     private let shortcutChordHint = "⌘K pressed · ⌘S: Keyboard Shortcuts · Esc: Cancel"
 
-    init(history: WorkspaceHistoryStore = WorkspaceHistoryStore(), inspection: InspectionPresenter = InspectionPresenter()) {
+    init(history: WorkspaceHistoryStore = WorkspaceHistoryStore(), inspection: InspectionPresenter = InspectionPresenter(), sourceEdits: SourceEditStore = SourceEditStore()) {
         self.history = history
         self.inspection = inspection
+        self.sourceEdits = sourceEdits
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -81,6 +85,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             self?.workspace.status.message.stringValue = message
             self?.workspace.status.message.toolTip = message
         }
+        sourceEdits.onError = { [weak self] error in self?.showEditError(error.localizedDescription) }
         workspace.header.openButton.target = self; workspace.header.openButton.action = #selector(openFolder)
         workspace.header.branchButton.target = self; workspace.header.branchButton.action = #selector(showBranches)
         workspace.header.worktreeButton.target = self; workspace.header.worktreeButton.action = #selector(showWorktrees)
@@ -107,6 +112,17 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         workspace.explorer.onReveal = { [weak self] path in
             guard let url = try? self?.session.reader?.files.safeURL(path) else { return }
             NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+        workspace.explorer.canRevealInFiles = { [weak self] path in self?.session.reader?.files.exists(path) == true }
+        workspace.explorer.onRevealInFiles = { [weak self] path in
+            guard let self, !self.session.isSwitching, self.session.reader?.files.exists(path) == true else { return }
+            self.showFiles()
+            if self.workspace.explorer.revealInFiles(path) {
+                self.view.window?.makeFirstResponder(self.workspace.explorer.outline)
+                self.scheduleReadingSave()
+            } else {
+                self.workspace.status.message.stringValue = "Could not locate \(path) in Files."
+            }
         }
         workspace.explorer.loadDirectory = { [weak self] path in
             guard let files = self?.session.reader?.files else { return [] }
@@ -151,7 +167,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             self.languageStatus = text
             self.refreshLanguageStatus()
             if text == "TypeScript · Ready", self.workspace.status.message.stringValue.hasPrefix("TypeScript") {
-                self.workspace.status.message.stringValue = "Read Only"
+                self.refreshEditingStatus()
                 self.workspace.status.message.toolTip = nil
             }
         }
@@ -194,6 +210,8 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         let changedRoot = previous?.root != state.root
         let saved = changedRoot ? history.readingSession(in: state.root) : nil
         if changedRoot {
+            do { try sourceEdits.activate(state.root) }
+            catch { showEditError(error.localizedDescription); return }
             readingStateReady = false
             resetReading()
             treeSessions = saved?.trees ?? [:]
@@ -205,7 +223,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             inspectToken = UUID(); hoverRequest = UUID()
             inspection.dismiss(); language.stop()
         }
-        let renames = previous.map { state.renames(from: $0) } ?? [:]
+        let renames = (previous.map { state.renames(from: $0) } ?? [:]).filter { sourceEdits.buffer($0.key)?.needsSave != true }
         history.renameFiles(renames, in: state.root)
         projectSearch.setWorkspace(root: state.root, paths: state.searchableFiles)
         quickOpen?.update(paths: state.searchableFiles, recent: history.recentFiles(in: state.root))
@@ -241,6 +259,14 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     }
 
     private func configureEditor(_ editor: EditorView) {
+        editor.sourceEdits = sourceEdits
+        editor.onSourceEdited = { [weak self, weak editor] in
+            guard let self, let editor else { return }
+            self.syncLanguage(for: editor)
+            if self.workspace.editor === editor { self.refreshEditingStatus(); self.refreshLanguageStatus() }
+        }
+        editor.onSourceSaved = { [weak self] _ in self?.session.refresh() }
+        editor.onEditError = { [weak self] message in self?.showEditError(message) }
         editor.onDraftActivated = { [weak self, weak editor] in
             guard let self, let editor else { return }
             self.workspace.editorGroups.activate(editor)
@@ -277,7 +303,8 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         }
         editor.onCursor = { [weak self, weak editor] position in
             guard let self, let editor, self.workspace.editor === editor else { return }
-            self.workspace.status.message.stringValue = "Ln \(position.line + 1), Col \(position.character + 1)  ·  \(editor.isEditingDraft ? "Editable" : "Read Only")"
+            self.workspace.status.message.stringValue = "Ln \(position.line + 1), Col \(position.character + 1)  ·  \(editor.isEditableDocument ? "Editable" : "Read Only")"
+            self.workspace.status.setEditable(editor.isEditableDocument)
         }
         editor.right.text.onInspect = { [weak self, weak editor] index, kind in
             guard let self, let editor else { return }
@@ -319,8 +346,9 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     }
 
     private func refreshEditingStatus() {
+        workspace.status.setEditable(workspace.editor.isEditableDocument)
         guard workspace.editor.activeDocument != nil else { return }
-        workspace.status.message.stringValue = workspace.editor.isEditingDraft ? "Editable text · ⌘S to save" : "Read Only"
+        workspace.status.message.stringValue = workspace.editor.isEditableDocument ? "Editable text · ⌘S to save" : "Read Only"
     }
 
     private func refreshLanguageStatus() {
@@ -355,6 +383,17 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     }
 
     private func openWorkspace(_ folder: URL, completion: ((Result<WorkspaceState, Error>) -> Void)? = nil) {
+        resolveSourceEdits(reason: "Save your file changes before switching projects.") { [weak self] allowed in
+            guard let self else { return }
+            guard allowed else {
+                completion?(.failure(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)))
+                return
+            }
+            self.performOpenWorkspace(folder, completion: completion)
+        }
+    }
+
+    private func performOpenWorkspace(_ folder: URL, completion: ((Result<WorkspaceState, Error>) -> Void)? = nil) {
         saveReadingSession()
         readingStateReady = false
         historySidebar?.setBusy(true)
@@ -368,8 +407,11 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         inspectToken = UUID()
         language.stop()
         workspace.status.message.stringValue = "Opening folder…"
-        workspace.editorGroups.editors.forEach { $0.allowsNavigation = false }
-        session.open(folder, completion: completion)
+        workspace.editorGroups.editors.forEach { $0.allowsNavigation = false; $0.editingSuspended = true }
+        session.open(folder) { [weak self] result in
+            self?.workspace.editorGroups.editors.forEach { $0.editingSuspended = false; $0.allowsNavigation = true }
+            completion?(result)
+        }
     }
 
     func openExternal(_ urls: [URL]) {
@@ -477,10 +519,11 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             case .success(let snapshot):
                 editor.show(snapshot, diff: diff, preserveScroll: preserveScroll, position: position, highlightDestination: highlightDestination)
                 if let reader = self.session.reader, snapshot.message == nil, self.language.supports(path), FileManager.default.fileExists(atPath: reader.root.appendingPathComponent(path).path) {
-                    self.language.open(url: reader.root.appendingPathComponent(path), text: snapshot.after, root: reader.root)
+                    self.language.open(url: reader.root.appendingPathComponent(path), text: editor.currentSource ?? snapshot.after, root: reader.root)
                 } else {
                     if self.workspace.editor === editor { self.refreshLanguageStatus() }
                 }
+                if self.workspace.editor === editor { self.refreshEditingStatus() }
                 if self.view.window?.firstResponder === editor {
                     self.view.window?.makeFirstResponder(editor.showingMarkdownPreview ? editor.markdown.text : editor.right.text)
                 }
@@ -581,8 +624,9 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     @objc func goBack() { workspace.editor.goBack() }
     @objc func goForward() { workspace.editor.goForward() }
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(saveTextAs), let menu = item as? NSMenuItem { menu.title = workspace.editor.isEditingDraft ? "Save Text As…" : "Save Copy As…" }
         if item.action == #selector(newTextTab) { return session.state != nil && !session.isSwitching }
-        if item.action == #selector(saveText) || item.action == #selector(saveTextAs) { return workspace.editor.isEditingDraft && !session.isSwitching }
+        if item.action == #selector(saveText) || item.action == #selector(saveTextAs) { return workspace.editor.isEditableDocument && !session.isSwitching && !decidingSourceEdits }
         if item.action == #selector(showQuickOpen) || item.action == #selector(showProjectSearch) { return session.state != nil && !session.isSwitching }
         if item.action == #selector(findInEditor) || item.action == #selector(findNext) || item.action == #selector(findPrevious) {
             return workspace.editor.canFind && !session.isSwitching
@@ -761,6 +805,14 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     func activate(_ destination: GitDestination, completion: @escaping (Result<WorkspaceState, Error>) -> Void) {
         guard !session.isSwitching, !session.isUpdatingIndex, session.reader != nil else { return }
+        resolveSourceEdits(reason: "Save your file changes before switching branches or worktrees.") { [weak self] allowed in
+            guard let self else { return }
+            guard allowed else { completion(.failure(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))); return }
+            self.performActivate(destination, completion: completion)
+        }
+    }
+
+    private func performActivate(_ destination: GitDestination, completion: @escaping (Result<WorkspaceState, Error>) -> Void) {
         cancelExternalOpen()
         saveReadingSession()
         readingStateReady = false
@@ -776,11 +828,11 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         workspace.navigation.search.isEnabled = false
         workspace.explorer.outline.isEnabled = false
         workspace.status.message.stringValue = "Switching repository context…"
-        workspace.editorGroups.editors.forEach { $0.allowsNavigation = false }
+        workspace.editorGroups.editors.forEach { $0.allowsNavigation = false; $0.editingSuspended = true }
         session.activate(destination) { [weak self] result in
             if let self, !self.workspace.searchHost.isHidden { self.projectSearch.setActive(true) }
             self?.readingStateReady = self?.displayedState != nil
-            self?.workspace.editorGroups.editors.forEach { $0.allowsNavigation = true }
+            self?.workspace.editorGroups.editors.forEach { $0.allowsNavigation = true; $0.editingSuspended = false }
             self?.historySidebar?.setBusy(false)
             self?.workspace.header.setBusy(false)
             self?.processExternalOpen()
@@ -789,6 +841,55 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             if case .failure(let error) = result { self?.workspace.status.message.stringValue = error.localizedDescription }
             completion(result)
         }
+    }
+
+    func prepareToClose(completion: @escaping (Bool) -> Void) {
+        resolveSourceEdits(reason: "Save your file changes before closing VCode.", completion: completion)
+    }
+
+    private func resolveSourceEdits(reason: String, completion: @escaping (Bool) -> Void) {
+        guard !decidingSourceEdits else { completion(false); return }
+        let paths = sourceEdits.dirtyPaths
+        guard !paths.isEmpty else { completion(true); return }
+        guard let window = view.window, window.attachedSheet == nil else { completion(false); return }
+        decidingSourceEdits = true
+        workspace.editorGroups.editors.forEach { $0.editingSuspended = true }
+        var discarded: [String] = []
+        func finish(_ allowed: Bool) {
+            sourceDecisionSheet = nil
+            decidingSourceEdits = false
+            workspace.editorGroups.editors.forEach { $0.editingSuspended = false }
+            completion(allowed)
+        }
+        func confirm(_ index: Int) {
+            guard index < paths.count else {
+                do { for path in discarded { try sourceEdits.discard(path) }; try sourceEdits.flush(); finish(true) }
+                catch { showEditError(error.localizedDescription); finish(false) }
+                return
+            }
+            let path = paths[index]
+            let sheet = DraftCloseSheet(title: path, detail: reason) { [weak self] choice in
+                guard let self else { return }
+                self.sourceDecisionSheet = nil
+                switch choice {
+                case .cancel: finish(false)
+                case .discard: discarded.append(path); confirm(index + 1)
+                case .save:
+                    do { try self.sourceEdits.save(path); self.session.refresh(); confirm(index + 1) }
+                    catch { self.showEditError(error.localizedDescription); finish(false) }
+                }
+            }
+            sourceDecisionSheet = sheet
+            window.beginSheet(sheet)
+        }
+        confirm(0)
+    }
+
+    private func showEditError(_ message: String) {
+        workspace.status.message.stringValue = message
+        workspace.status.message.toolTip = message
+        externalOpenFailures = [ExternalOpenNotice.Failure(url: session.state?.root ?? URL(fileURLWithPath: "/"), reason: message)]
+        workspace.showOpenNotice(externalOpenFailures, title: "Unable to save changes")
     }
 
     private func resetReading() {

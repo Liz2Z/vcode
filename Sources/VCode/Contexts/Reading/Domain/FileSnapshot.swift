@@ -8,12 +8,14 @@ struct FileSnapshot: Equatable {
     let rows: [DiffRow]
     let message: String?
     let isBinary: Bool
+    let editable: Bool
 
     let comparison: GitComparison?
 
-    init(path: String, before: String, after: String, rows: [DiffRow], message: String?, isBinary: Bool, comparison: GitComparison? = nil) {
+    init(path: String, before: String, after: String, rows: [DiffRow], message: String?, isBinary: Bool, comparison: GitComparison? = nil, editable: Bool = false) {
         self.path = path; self.before = before; self.after = after; self.rows = rows
         self.message = message; self.isBinary = isBinary; self.comparison = comparison
+        self.editable = editable
     }
 
     var additions: Int { rows.filter { $0.right.kind == .added }.count }

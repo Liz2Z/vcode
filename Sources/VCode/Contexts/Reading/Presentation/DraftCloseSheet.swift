@@ -5,16 +5,20 @@ final class DraftCloseSheet: NSWindow {
     enum Choice { case save, discard, cancel }
     private var completion: ((Choice) -> Void)?
 
-    init(title: String, completion: @escaping (Choice) -> Void) {
+    init(title: String, detail message: String = "Save your text before closing this tab.", completion: @escaping (Choice) -> Void) {
         self.completion = completion
         super.init(contentRect: NSRect(x: 0, y: 0, width: 440, height: 180), styleMask: [.titled], backing: .buffered, defer: false)
         isReleasedWhenClosed = false
-        self.title = "Unsaved text"
+        self.title = "Unsaved changes"
+        isOpaque = false
+        backgroundColor = .clear
         let content = NSView()
-        Theme.fill(content, Theme.background)
-        contentView = content
+        let surface = GlassSurface(content: content, tintColor: Theme.surface.withAlphaComponent(0.7), fallbackMaterial: .hudWindow)
+        contentView = surface
         let heading = Theme.label("Save changes to \(title)?", size: 15)
-        let detail = Theme.label("Save your text before closing this tab.", size: 12, color: Theme.muted)
+        heading.lineBreakMode = .byTruncatingMiddle
+        let detail = Theme.label(message, size: 12, color: Theme.muted)
+        detail.maximumNumberOfLines = 2
         let cancel = Theme.actionButton("Cancel", target: self, action: #selector(cancelClose))
         let discard = Theme.actionButton("Don’t Save", target: self, action: #selector(discardClose))
         let save = Theme.actionButton("Save…", target: self, action: #selector(saveClose))
@@ -27,6 +31,7 @@ final class DraftCloseSheet: NSWindow {
             heading.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24), heading.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
             heading.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -24),
             detail.leadingAnchor.constraint(equalTo: heading.leadingAnchor), detail.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 10),
+            detail.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -24),
             buttons.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24), buttons.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -22),
             buttons.heightAnchor.constraint(equalToConstant: 30)
         ])

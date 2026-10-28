@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var resourceUsage = ResourceUsageWindowController()
     private var pendingExternalURLs: [URL] = []
     private var readyForDocuments = false
+    private var closingApproved = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         appearance.start()
@@ -75,8 +76,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        workspace?.saveReadingSession()
+        guard let workspace, !workspace.sourceEdits.dirtyPaths.isEmpty else { return .terminateNow }
+        DispatchQueue.main.async {
+            workspace.prepareToClose { allowed in sender.reply(toApplicationShouldTerminate: allowed) }
+        }
+        return .terminateLater
+    }
     func applicationWillTerminate(_ notification: Notification) { windowSave?.cancel(); saveWindow(); workspace?.shutdown() }
-    func windowShouldClose(_ sender: NSWindow) -> Bool { workspace?.saveReadingSession(); return true }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        workspace?.saveReadingSession()
+        if closingApproved { closingApproved = false; return true }
+        guard let workspace, !workspace.sourceEdits.dirtyPaths.isEmpty else { return true }
+        workspace.prepareToClose { [weak self, weak sender] allowed in
+            guard let self, let sender, allowed else { return }
+            self.closingApproved = true
+            sender.performClose(nil)
+        }
+        return false
+    }
     func windowDidMove(_ notification: Notification) { scheduleWindowSave() }
     func windowDidResize(_ notification: Notification) { scheduleWindowSave() }
     private func scheduleWindowSave() {
@@ -140,8 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         file.addItem(.separator())
         item(file, "Close Tab", #selector(WorkspaceController.closeTab), "w", target: workspace)
         let edit = submenu("Edit")
-        item(edit, "Undo", Selector(("undo:")), "z", includeInShortcutList: false)
-        item(edit, "Redo", Selector(("redo:")), "z", flags: [.command, .shift], includeInShortcutList: false)
+        StandardEditCommands.addUndoRedo(to: edit)
         edit.addItem(.separator())
         item(edit, "Cut", #selector(NSText.cut(_:)), "x", includeInShortcutList: false)
         item(edit, "Paste", #selector(NSText.paste(_:)), "v", includeInShortcutList: false)

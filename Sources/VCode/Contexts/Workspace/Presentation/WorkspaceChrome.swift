@@ -109,12 +109,14 @@ final class WorkspaceNavigation: NSView {
 }
 
 final class WorkspaceStatus: NSView {
+    private let modeIcon = NSImageView()
     let message = Theme.label("Open a folder to begin", size: 11, color: Theme.muted)
     let language = Theme.label("", size: 11, color: Theme.muted)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        let icon = NSImageView(image: NSImage(systemSymbolName: "lock", accessibilityDescription: "Read only") ?? NSImage())
+        let icon = modeIcon
+        setEditable(false)
         icon.contentTintColor = Theme.muted
         add(icon, message, language)
         NSLayoutConstraint.activate([
@@ -124,4 +126,7 @@ final class WorkspaceStatus: NSView {
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+    func setEditable(_ editable: Bool) {
+        modeIcon.image = NSImage(systemSymbolName: editable ? "pencil" : "lock", accessibilityDescription: editable ? "Editable" : "Read only")
+    }
 }

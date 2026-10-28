@@ -1,6 +1,9 @@
 import AppKit
 
 final class CodeTextView: NSTextView {
+    var documentUndoManager: UndoManager?
+    override var undoManager: UndoManager? { documentUndoManager ?? super.undoManager }
+    var supportsCodeIntelligence = true
     var onTextChange: (() -> Void)?
     var onWillChangeText: (() -> Void)?
     var onFindAction: ((NSTextFinder.Action) -> Void)?
@@ -8,6 +11,31 @@ final class CodeTextView: NSTextView {
     private(set) var searchRanges: [NSRange] = []
     private(set) var currentSearchRange: NSRange?
     private(set) var isFindSelection = false
+
+    // Standard Edit menu actions must resolve here before NSWindow: source
+    // documents have their own undo manager, distinct from the window's.
+    @objc func undo(_ sender: Any?) {
+        guard isEditable, allowsUndo else { return }
+        breakUndoCoalescing()
+        if undoManager?.canUndo == true { undoManager?.undo() }
+    }
+
+    @objc func redo(_ sender: Any?) {
+        guard isEditable, allowsUndo else { return }
+        breakUndoCoalescing()
+        if undoManager?.canRedo == true { undoManager?.redo() }
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(undo(_:)) { return isEditable && allowsUndo && undoManager?.canUndo == true }
+        if item.action == #selector(redo(_:)) { return isEditable && allowsUndo && undoManager?.canRedo == true }
+        return super.validateUserInterfaceItem(item)
+    }
+
+    override func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(undo(_:)) || item.action == #selector(redo(_:)) { return validateUserInterfaceItem(item) }
+        return super.validateMenuItem(item)
+    }
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         isFindSelection = false
@@ -186,7 +214,7 @@ final class CodeTextView: NSTextView {
     }
 
     private func updateCommandHover(at point: NSPoint) {
-        guard !isEditable else { return }
+        guard supportsCodeIntelligence else { return }
         let range = visibleRect.contains(point) ? identifier(at: point) : nil
         if range == commandCandidate {
             if underlinedIdentifier != nil { NSCursor.pointingHand.set() }
@@ -287,13 +315,13 @@ final class CodeTextView: NSTextView {
     }
 
     private func updateHover(_ event: NSEvent) {
-        guard !isEditable else { return }
+        guard supportsCodeIntelligence else { return }
         let point = convert(event.locationInWindow, from: nil)
         updatePointer(at: point, modifiers: event.modifierFlags)
     }
 
     private func updatePointer(at point: NSPoint, modifiers: NSEvent.ModifierFlags) {
-        guard !isEditable, !skipObscuredPointer(at: convert(point, to: nil)) else { return }
+        guard supportsCodeIntelligence, !skipObscuredPointer(at: convert(point, to: nil)) else { return }
         let wasCommandHeld = commandHeld
         commandHeld = modifiers.contains(.command)
         if commandHeld {
@@ -361,7 +389,7 @@ final class CodeTextView: NSTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        if isEditable { super.mouseDown(with: event); onCursor?(selectedRange().location); return }
+        if !supportsCodeIntelligence { super.mouseDown(with: event); onCursor?(selectedRange().location); return }
         cancelInspection()
         if event.modifierFlags.contains(.command) {
             if let range = identifier(at: convert(event.locationInWindow, from: nil)) {

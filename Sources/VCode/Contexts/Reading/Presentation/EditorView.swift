@@ -18,6 +18,17 @@ final class EditorView: NSView, NSSplitViewDelegate {
     private let message = Theme.label("", size: 13, color: Theme.muted)
     private var session = ReaderSession()
     var draftStore = TextDraftStore()
+    var sourceEdits: SourceEditStore? {
+        didSet {
+            oldValue?.removeObserver(readingID)
+            sourceEdits?.observe(readingID) { [weak self] path, sender in self?.sourceChanged(path, sender: sender) }
+        }
+    }
+    private var sourceUndo: [String: UndoManager] = [:]
+    private var sourceUndoText: [String: String] = [:]
+    var onSourceEdited: (() -> Void)?
+    var onSourceSaved: ((String) -> Void)?
+    var onEditError: ((String) -> Void)?
     private var drafts: [UUID: TextDraft] = [:]
     private var pendingDraftWrites = Set<UUID>()
     private var draftSaveWork: DispatchWorkItem?
@@ -26,6 +37,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     var activeDocument: ReadingDocument? { session.activeDocument }
     var canFind: Bool { activeDocument != nil && (!split.isHidden || showingMarkdownPreview) }
     var isEditingDraft: Bool { session.activeDocument?.isDraft == true }
+    var isEditableDocument: Bool { isEditingDraft ? right.text.isEditable : activeComparison == nil && activePath.flatMap { sourceEdits?.buffer($0) } != nil && right.text.isEditable }
     var onDraftActivated: (() -> Void)?
     private var snapshot: FileSnapshot?
     private var renderedDiff = false
@@ -40,6 +52,9 @@ final class EditorView: NSView, NSSplitViewDelegate {
     var canGoBack: Bool { readingHistory.canGoBack }
     var canGoForward: Bool { readingHistory.canGoForward }
     var allowsNavigation = true { didSet { updateNavigationButtons() } }
+    var editingSuspended = false {
+        didSet { right.text.isEditable = !editingSuspended && message.isHidden && (isEditingDraft || (!showingDiff && snapshot?.path == activePath && activeComparison == nil && activePath.flatMap { sourceEdits?.buffer($0) } != nil)) }
+    }
     var showingMarkdownPreview: Bool { !markdown.isHidden }
     private(set) var showingDiff = false
     var activeComparison: GitComparison? { session.activeDocument?.comparison }
@@ -47,7 +62,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     var currentSource: String? {
         guard let snapshot, snapshot.path == activePath,
               snapshot.comparison == activeComparison || snapshot.comparison == nil else { return nil }
-        return snapshot.after
+        return activeComparison == nil ? sourceEdits?.buffer(snapshot.path)?.text ?? snapshot.after : snapshot.after
     }
     var onSplitEditor: (() -> Void)?
     var onCloseGroup: (() -> Void)?
@@ -119,7 +134,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         right.onScroll = { [weak self] point in if self?.showingDiff == true { self?.left.sync(to: point) } }
         right.text.onTextChange = { [weak self] in
             guard let self else { return }
-            self.draftChanged()
+            self.editableChanged()
             self.find.didChangeText(in: self.right)
         }
         for pane in [left, right] {
@@ -153,6 +168,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         reset()
     }
     required init?(coder: NSCoder) { fatalError() }
+    deinit { sourceEdits?.removeObserver(readingID) }
     override var acceptsFirstResponder: Bool { true }
 
     func performFind(_ action: NSTextFinder.Action) {
@@ -209,7 +225,11 @@ final class EditorView: NSView, NSSplitViewDelegate {
         renderedDiff = diff
         showingDiff = diff
         welcome.isHidden = true
-        if let note = next.message { showMessage(note); completeArrival(fallback: restoration); return }
+        let buffer: SourceEditStore.Buffer?
+        do {
+            buffer = !diff && (next.editable || sourceEdits?.buffer(next.path)?.needsSave == true) ? try sourceEdits?.open(next.path) : nil
+        } catch { showMessage("Could not open for editing: " + error.localizedDescription); right.text.isEditable = false; return }
+        if let note = next.message, buffer == nil { showMessage(note); completeArrival(fallback: restoration); return }
         message.isHidden = true
         split.isHidden = false
         left.isHidden = !diff
@@ -221,7 +241,8 @@ final class EditorView: NSView, NSSplitViewDelegate {
             left.removeFromSuperview()
         }
         split.needsDisplay = true
-        if !unchanged {
+        if !unchanged || (buffer != nil && right.text.string != buffer?.text) {
+            right.text.documentUndoManager = nil
             right.additionalSearchRows = []
             right.additionalCurrentSearchRows = []
             right.showDiffOverview(diff ? next.rows : nil, source: !diff)
@@ -232,8 +253,17 @@ final class EditorView: NSView, NSSplitViewDelegate {
                 split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
                 DiffHighlights.apply(next, left: left, right: right)
             } else {
-                let lines = Diff.lines(next.after).enumerated().map { CodeLine(number: $0.offset + 1, text: $0.element, kind: .unchanged) }
-                right.show(lines: lines, path: next.path, title: (next.path as NSString).lastPathComponent, detail: "READ ONLY", showsHeader: false)
+                if let buffer {
+                    right.showEditable(buffer.text, path: next.path)
+                    let undo = sourceUndo[next.path] ?? UndoManager()
+                    sourceUndo[next.path] = undo
+                    sourceUndoText[next.path] = buffer.text
+                    right.text.documentUndoManager = undo
+                    right.text.supportsCodeIntelligence = true
+                } else {
+                    let lines = Diff.lines(next.after).enumerated().map { CodeLine(number: $0.offset + 1, text: $0.element, kind: .unchanged) }
+                    right.show(lines: lines, path: next.path, title: (next.path as NSString).lastPathComponent, detail: "READ ONLY", showsHeader: false)
+                }
                 split.adjustSubviews()
             }
             right.resetScroll()
@@ -243,7 +273,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         breadcrumbs.showCounts(diff ? next : nil)
         let supportsPreview = MarkdownRenderer.supports(next.path) && !diff
         let preview = supportsPreview && !markdownSourcePaths.contains(next.path)
-        if supportsPreview && !unchanged { markdown.show(next.after, restoring: restoration?.markdown) }
+        if supportsPreview && !unchanged { markdown.show(buffer?.text ?? next.after, restoring: restoration?.markdown) }
         if !supportsPreview { markdown.clear() }
         markdown.isHidden = !preview
         split.isHidden = preview
@@ -255,6 +285,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         }
         if let position { right.reveal(line: position.0, character: position.1, highlightDestination: highlightDestination) }
         if !markdown.isRendering { completeArrival(fallback: restoration) }
+        if buffer != nil { right.text.isEditable = !editingSuspended; showSourceLabel() }
     }
 
     func showError(_ error: Error) { snapshot = nil; showMessage(error.localizedDescription) }
@@ -271,6 +302,9 @@ final class EditorView: NSView, NSSplitViewDelegate {
 
     func reset(clearHistory: Bool = true) {
         flushDrafts()
+        right.text.documentUndoManager = nil
+        sourceUndo = [:]
+        sourceUndoText = [:]
         session.reset()
         tabs.show(session)
         snapshot = nil
@@ -300,7 +334,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     }
 
     func documentTitle(_ document: ReadingDocument) -> String {
-        guard let id = document.draftID else { return (document.path as NSString).lastPathComponent }
+        guard let id = document.draftID else { return (document.path as NSString).lastPathComponent + (document.comparison == nil && sourceEdits?.buffer(document.path)?.needsSave == true ? " •" : "") }
         let draft = drafts[id] ?? (try? draftStore.load(id))
         return (draft?.destination?.lastPathComponent ?? document.path) + (draft?.needsSave == true ? " •" : "")
     }
@@ -337,6 +371,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         do {
             let draft = try drafts[id] ?? draftStore.load(id)
             drafts[id] = draft
+            right.text.documentUndoManager = nil
             right.showEditable(draft.text, path: draft.destination?.path ?? "")
             split.isHidden = false; message.isHidden = true
             split.adjustSubviews(); right.resetScroll()
@@ -353,7 +388,12 @@ final class EditorView: NSView, NSSplitViewDelegate {
         onSessionChanged?()
     }
 
-    private func draftChanged() {
+    private func editableChanged() {
+        if !isEditingDraft, let path = activePath, activeComparison == nil, sourceEdits?.buffer(path) != nil {
+            right.updateEditableLines(path: path)
+            sourceEdits?.update(path, text: right.text.string, sender: readingID)
+            return
+        }
         guard let document = session.activeDocument, let id = document.draftID, var draft = drafts[id] else { return }
         let wasDirty = draft.needsSave
         draft.text = right.text.string
@@ -373,6 +413,38 @@ final class EditorView: NSView, NSSplitViewDelegate {
         breadcrumbs.path.stringValue = (draft.destination?.path ?? document.path) + (draft.needsSave ? "  ·  Edited" : "  ·  Editable")
     }
 
+    private func showSourceLabel() {
+        guard let path = activePath, activeComparison == nil, let buffer = sourceEdits?.buffer(path) else { return }
+        breadcrumbs.path.stringValue = path.replacingOccurrences(of: "/", with: "  ›  ") + (buffer.needsSave ? "  ·  Edited" : "")
+    }
+
+    private func sourceChanged(_ path: String, sender: UUID?) {
+        tabs.show(session, revealActive: false)
+        if let buffer = sourceEdits?.buffer(path) {
+            if sender != readingID, let previous = sourceUndoText[path], previous != buffer.text { sourceUndo[path]?.removeAllActions() }
+            sourceUndoText[path] = buffer.text
+        } else { sourceUndo[path]?.removeAllActions(); sourceUndoText.removeValue(forKey: path) }
+        guard activePath == path, activeComparison == nil else { return }
+        guard let buffer = sourceEdits?.buffer(path) else { onSourceSaved?(path); return }
+        if sender != readingID, right.text.string != buffer.text {
+            // Another group changed the shared working copy. Keep this group's
+            // viewport, but invalidate undo operations against the older text.
+            let position = right.readingPosition()
+            find.willChangeText(in: right)
+            right.text.cancelInspection(); right.text.resetSymbolFeedback()
+            sourceUndo[path]?.removeAllActions()
+            right.text.breakUndoCoalescing()
+            right.text.string = buffer.text
+            right.updateEditableLines(path: path)
+            right.restore(position)
+            find.didChangeText(in: right)
+        }
+        if showingMarkdownPreview { markdown.show(buffer.text, restoring: markdown.readingPosition()) }
+        showSourceLabel()
+        onSourceEdited?()
+        onSessionChanged?()
+    }
+
     private func flushDrafts() {
         draftSaveWork?.cancel(); draftSaveWork = nil
         for id in Array(pendingDraftWrites) {
@@ -383,6 +455,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     }
 
     func saveTextAs(alwaysChoose: Bool = false, completion: ((Bool) -> Void)? = nil) {
+        if !isEditingDraft { saveSourceAs(alwaysChoose: alwaysChoose, completion: completion); return }
         guard let document = session.activeDocument, let id = document.draftID, let draft = drafts[id], let window else { completion?(false); return }
         func save(to url: URL) {
             do {
@@ -408,16 +481,60 @@ final class EditorView: NSView, NSSplitViewDelegate {
         }
     }
 
+    private func saveSourceAs(alwaysChoose: Bool, completion: ((Bool) -> Void)?) {
+        guard isEditableDocument, let path = activePath, let sourceEdits else { completion?(false); return }
+        if !alwaysChoose {
+            do { try sourceEdits.save(path); onSourceSaved?(path); completion?(true) }
+            catch { reportEditError(error); completion?(false) }
+            return
+        }
+        guard let window else { completion?(false); return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = (path as NSString).lastPathComponent
+        panel.directoryURL = sourceEdits.root?.appendingPathComponent(path).deletingLastPathComponent()
+        panel.canCreateDirectories = true
+        panel.beginSheetModal(for: window) { [weak self] result in
+            guard let self, result == .OK, let url = panel.url else { completion?(false); return }
+            do { try sourceEdits.export(path, to: url); self.onSourceSaved?(path); completion?(true) }
+            catch { self.reportEditError(error); completion?(false) }
+        }
+    }
+
+    private func reportEditError(_ error: Error) {
+        breadcrumbs.path.stringValue = "Could not save: " + error.localizedDescription
+        onEditError?(error.localizedDescription)
+    }
+
     func requestClose(_ documents: [ReadingDocument], completion: (() -> Void)? = nil) {
         guard draftCloseSheet == nil else { return }
         saveReadingPosition()
+        var discardedSources: [String] = []
         func confirm(_ index: Int) {
             guard index < documents.count else {
+                do { for path in discardedSources { try sourceEdits?.discard(path) } }
+                catch { reportEditError(error); return }
                 finishClosing(session.close(documents))
                 completion?()
                 return
             }
             let document = documents[index]
+            if !document.isDraft, document.comparison == nil, sourceEdits?.buffer(document.path)?.needsSave == true {
+                guard let window else { return }
+                let sheet = DraftCloseSheet(title: document.path) { [weak self] choice in
+                    guard let self else { return }
+                    self.draftCloseSheet = nil
+                    switch choice {
+                    case .cancel: break
+                    case .discard: discardedSources.append(document.path); confirm(index + 1)
+                    case .save:
+                        do { try self.sourceEdits?.save(document.path); self.onSourceSaved?(document.path); confirm(index + 1) }
+                        catch { self.reportEditError(error) }
+                    }
+                }
+                draftCloseSheet = sheet
+                window.beginSheet(sheet)
+                return
+            }
             guard let id = document.draftID, (drafts[id] ?? (try? draftStore.load(id)))?.needsSave == true, let window else { confirm(index + 1); return }
             // Switch to the exact draft the close operation is asking about.
             openDraft(document)
@@ -464,12 +581,13 @@ final class EditorView: NSView, NSSplitViewDelegate {
         }
         guard let snapshot, snapshot.path == document.path,
               snapshot.comparison == document.comparison else { return nil }
-        if snapshot.message != nil { return savedPositions[document] }
+        if snapshot.message != nil && !isEditableDocument { return savedPositions[document] }
         return ReadingLocation(document: document, right: right.readingPosition(), left: left.readingPosition(),
             markdown: markdown.readingPosition(), preview: showingMarkdownPreview)
     }
 
     private func saveReadingPosition() {
+        right.text.breakUndoCoalescing()
         flushDrafts()
         guard let location = readingLocation() else { return }
         savedPositions[location.document] = location
@@ -492,6 +610,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
 
     func captureSession() -> EditorReadingSession {
         flushDrafts()
+        do { try sourceEdits?.flush() } catch { reportEditError(error) }
         var positions = savedPositions
         // An app exit can arrive before the active document's asynchronous render.
         // Keep its saved anchor instead of capturing the temporary loading view.
@@ -504,6 +623,10 @@ final class EditorView: NSView, NSSplitViewDelegate {
         reset()
         let saved = saved.validated
         session.restore(documents: saved.documents, active: saved.activeDocument)
+        for document in saved.documents where !document.isDraft && document.comparison == nil {
+            do { try sourceEdits?.restoreRecovery(document.path) }
+            catch { onEditError?("Could not restore \(document.path): " + error.localizedDescription) }
+        }
         for location in saved.positions { savedPositions[location.document] = location }
         markdownSourcePaths = Set(saved.markdownSourcePaths)
         tabs.show(session)
@@ -540,7 +663,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         savedPositions = positions
         markdownSourcePaths = Set(markdownSourcePaths.map { renames[$0] ?? $0 })
         if let old = snapshot, let path = renames[old.path] {
-            snapshot = FileSnapshot(path: path, before: old.before, after: old.after, rows: old.rows, message: old.message, isBinary: old.isBinary, comparison: old.comparison)
+            snapshot = FileSnapshot(path: path, before: old.before, after: old.after, rows: old.rows, message: old.message, isBinary: old.isBinary, comparison: old.comparison, editable: old.editable)
             needsRender = true
         }
         if var location = pendingRestore {
@@ -569,6 +692,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         markdown.isHidden = !preview
         split.isHidden = preview
         breadcrumbs.showMarkdownControls(true, preview: preview)
+        if preview { markdown.show(sourceEdits?.buffer(path)?.text ?? snapshot.after, restoring: markdown.readingPosition()) }
         onSessionChanged?()
         if preview { window?.makeFirstResponder(markdown.text) } else { window?.makeFirstResponder(right.text) }
     }

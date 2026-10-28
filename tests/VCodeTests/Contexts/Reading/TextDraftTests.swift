@@ -127,15 +127,18 @@ final class TextDraftTests: XCTestCase {
         XCTAssertTrue(view.status.message.stringValue.contains("Editable"))
         controller.openFile("source.txt", diff: false)
         XCTAssertEqual(view.status.message.stringValue, "Read Only", "Mode must update before the asynchronous source load, without a code click")
+        wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in view.editor.isEditableDocument }, object: nil)], timeout: 10)
+        XCTAssertTrue(view.status.message.stringValue.contains("Editable"))
         controller.newTextTab()
         let draftEditor = view.editor
         controller.splitEditorRight()
         controller.openFile("source.txt", diff: false)
         XCTAssertEqual(view.status.message.stringValue, "Read Only")
+        wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in view.editor.isEditableDocument }, object: nil)], timeout: 10)
         view.editorGroups.activate(draftEditor)
         XCTAssertTrue(view.status.message.stringValue.contains("Editable"))
         view.editorGroups.activate(view.editorGroups.editors[1])
-        XCTAssertEqual(view.status.message.stringValue, "Read Only")
+        XCTAssertTrue(view.status.message.stringValue.contains("Editable"))
     }
 
     func testMissingDraftShowsErrorAndDoesNotBecomeWritableEmptyText() throws {

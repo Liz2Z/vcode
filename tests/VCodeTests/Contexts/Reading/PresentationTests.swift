@@ -53,7 +53,10 @@ final class PresentationTests: XCTestCase {
         }
         let findSurfaces = surfaces(workspace.editor.findBar)
         XCTAssertEqual(findSurfaces.count, 1, "The floating Find controls use their own native glass surface")
-        XCTAssertEqual(surfaces(workspace).count, 2, "Glass belongs to the sidebar and floating Find, not the reading body")
+        XCTAssertEqual(surfaces(workspace.openNotice).count, 1, "File-operation failures use the shared native glass overlay")
+        XCTAssertTrue(surfaces(workspace.editor.right).isEmpty, "Glass must not cover the reading body")
+        XCTAssertTrue(surfaces(workspace.editor.left).isEmpty)
+        XCTAssertEqual(surfaces(workspace).count, 3, "Sidebar, floating Find, and file-operation notice own the glass surfaces")
     }
 
     func testRepositoryControlsAndBreadcrumbsFitNarrowAndWideWindows() throws {

@@ -169,6 +169,7 @@ final class CodePane: NSView {
         onWillReplaceText?()
         setSearchMatches([])
         text.isEditable = false
+        text.supportsCodeIntelligence = true
         text.undoManager?.removeAllActions()
         text.cancelNavigationFlash()
         text.resetSymbolFeedback()
@@ -195,6 +196,7 @@ final class CodePane: NSView {
         show(lines: [], path: path, title: "", detail: "", showsHeader: false)
         text.string = source
         text.isEditable = true
+        text.supportsCodeIntelligence = false
         text.allowsUndo = true
         updateEditableLines(path: path)
         let paragraph = NSMutableParagraphStyle()

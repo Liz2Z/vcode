@@ -80,9 +80,9 @@ final class WorkspaceView: NSView, NSSplitViewDelegate {
         recentSplit.adjustSubviews()
     }
 
-    func showOpenNotice(_ failures: [ExternalOpenNotice.Failure]) {
+    func showOpenNotice(_ failures: [ExternalOpenNotice.Failure], title: String? = nil) {
         if openNotice.isHidden { noticePreviousFocus = window?.firstResponder }
-        openNotice.show(failures, empty: editorGroups.editors.allSatisfy { $0.activePath == nil })
+        openNotice.show(failures, empty: editorGroups.editors.allSatisfy { $0.activePath == nil }, title: title)
         openNotice.isHidden = false
         if window?.attachedSheet == nil { window?.makeFirstResponder(openNotice) }
     }

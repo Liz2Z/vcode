@@ -55,7 +55,7 @@ final class WorkspaceReader {
         }
         let before = String(decoding: original.data, as: UTF8.self)
         let after = String(decoding: content.data, as: UTF8.self)
-        guard compare else { return FileSnapshot(path: path, before: "", after: after, rows: [], message: nil, isBinary: false) }
+        guard compare else { return FileSnapshot(path: path, before: "", after: after, rows: [], message: nil, isBinary: false, editable: true) }
         if let cached = lastComparison, cached.path == path, cached.comparison == scope, cached.before == before, cached.after == after { return cached }
         let patch = try git.patch(before: original.data, after: content.data)
         let rows = try Diff.align(before: before, after: after, patch: patch)
