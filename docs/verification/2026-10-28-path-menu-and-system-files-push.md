@@ -15,7 +15,7 @@
 对照 tests/ui/README.md 中全部文件浏览、文件夹整行点击、改动分类、暂存范围、复制路径、快速打开及标签阅读要求，沿用本次系统元数据和菜单的实际窗口记录：
 
 - 目录、文件、中文和空格、已删除 Changes 记录的路径复制正确；右键不会误打开文件、改变当前阅读或展开目录；分类标题不出现文件路径菜单。详情见 2026-10-27-file-tree-path-menu.md。
-- 系统元数据在完整浏览、按需目录及 Changes 中隐藏；普通隐藏配置与交换文件保留。详情见 docs/pitfalls/2026-10-27-system-metadata-and-swap-files.md。
+- 系统元数据在完整浏览、按需目录及 Changes 中隐藏；普通隐藏配置与交换文件保留。详情见 docs/pitfalls.md#filesystem。
 - 完整自动化结束后的固定预览补验：Files／Changes 往返正常；e2e 整行展开后仅出现 api-url.test.ts，ignored 按需展开后仅出现 readable.ts；两者均无 .DS_Store，正常目录未丢失。
 - ⌘P 输入 .DS_Store 无结果，改搜 AGENTS.md.swp 得到唯一结果，Return 后打开 skills/AGENTS.md.swp，正文 editor swap fixture 正常，Files 中目录随之展开并选中该项，底栏恢复 Read Only。
 - Changes 可见三项正常改动，包括交换文件及源码修改、删除；已跟踪并修改的系统元数据未混入列表或计数。
