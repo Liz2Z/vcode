@@ -4,18 +4,19 @@ final class GlassSurface: NSView {
     let content: NSView
     let material: NSView
 
-    init(content: NSView = NSView(), radius: CGFloat = Theme.Layout.panelRadius) {
+    init(content: NSView = NSView(), radius: CGFloat = Theme.Layout.panelRadius,
+         tintColor: NSColor? = Theme.surface.withAlphaComponent(0.55), fallbackMaterial: NSVisualEffectView.Material = .sidebar) {
         self.content = content
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView()
             glass.style = .regular
-            glass.tintColor = Theme.surface.withAlphaComponent(0.55)
+            glass.tintColor = tintColor
             glass.cornerRadius = radius
             glass.contentView = content
             material = glass
         } else {
             let blur = NSVisualEffectView()
-            blur.material = .sidebar
+            blur.material = fallbackMaterial
             blur.blendingMode = .withinWindow
             blur.state = .followsWindowActiveState
             blur.wantsLayer = true

@@ -17,6 +17,9 @@ enum Theme {
     static let accent = color(light: 0x9A5B16, dark: 0xE6C579)
     static let green = color(light: 0x2C7046, dark: 0x88CCA0)
     static let red = color(light: 0xAA3541, dark: 0xE89A9E)
+    static let occurrence = color(light: 0xE5BE00, dark: 0xFFE24A)
+    static let searchMatch = color(light: 0x197B9A, dark: 0x54C4E5)
+    static let currentSearchMatch = color(light: 0x006E91, dark: 0x90E6FF)
     enum GitStatus {
         static let ignored = color(light: 0xA0A0A0, dark: 0x666666)
         static let modified = color(light: 0x9D4500, dark: 0xFFBE3B)

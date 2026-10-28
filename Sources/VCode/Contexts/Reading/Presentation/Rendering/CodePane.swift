@@ -16,6 +16,10 @@ final class CodePane: NSView {
     private(set) var lines: [CodeLine] = []
     private(set) var offsets: [Int] = []
     var onScroll: ((NSPoint) -> Void)?
+    var onWillReplaceText: (() -> Void)?
+    var onSearchMatchesChanged: (() -> Void)?
+    var additionalSearchRows: [Int] = [] { didSet { updateOccurrenceMarkers() } }
+    var additionalCurrentSearchRows: [Int] = [] { didSet { updateOccurrenceMarkers() } }
     var isSyncing = false
 
     override init(frame frameRect: NSRect) {
@@ -43,7 +47,7 @@ final class CodePane: NSView {
         text.textColor = Theme.text
         text.insertionPointColor = Theme.text
         text.font = Theme.Code.font()
-        text.selectedTextAttributes = [.backgroundColor: Theme.accent.withAlphaComponent(0.26), .foregroundColor: Theme.text]
+        text.selectedTextAttributes = [.backgroundColor: NSColor.selectedTextBackgroundColor, .foregroundColor: NSColor.selectedTextColor]
         text.textContainerInset = NSSize(width: 10, height: Theme.Code.verticalInset)
         text.isVerticallyResizable = true
         text.isHorizontallyResizable = true
@@ -89,6 +93,10 @@ final class CodePane: NSView {
             self.updateOverview()
         }
         diffOverview.onWheel = { [weak self] event in self?.scroll.scrollWheel(with: event) }
+        text.onOccurrencesChanged = { [weak self] _ in
+            guard let self else { return }
+            self.updateOccurrenceMarkers()
+        }
         headerHeight = header.heightAnchor.constraint(equalToConstant: 28)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: topAnchor), header.leadingAnchor.constraint(equalTo: leadingAnchor), header.trailingAnchor.constraint(equalTo: trailingAnchor), headerHeight,
@@ -105,12 +113,12 @@ final class CodePane: NSView {
         if let documentObservation { NotificationCenter.default.removeObserver(documentObservation) }
     }
 
-    func showDiffOverview(_ rows: [DiffRow]?) {
-        diffOverview.isHidden = rows == nil
-        overviewWidth.constant = rows == nil ? 0 : 14
-        scroll.hasVerticalScroller = rows == nil
+    func showDiffOverview(_ rows: [DiffRow]?, source: Bool = false) {
+        diffOverview.isHidden = rows == nil && !source
+        overviewWidth.constant = diffOverview.isHidden ? 0 : DiffOverview.preferredWidth
+        scroll.hasVerticalScroller = diffOverview.isHidden
         Theme.compactScrollers(scroll)
-        diffOverview.show(rows: rows ?? [])
+        diffOverview.show(rows: rows ?? [], isDiff: rows != nil)
         updateOverview()
     }
 
@@ -122,7 +130,44 @@ final class CodePane: NSView {
                             scrollY: scroll.contentView.bounds.minY)
     }
 
+    func setSearchMatches(_ ranges: [NSRange]) {
+        text.setSearchMatches(ranges)
+        updateOccurrenceMarkers()
+        onSearchMatchesChanged?()
+    }
+
+    func setCurrentSearchMatch(_ range: NSRange?) {
+        text.setCurrentSearchMatch(range)
+        updateOccurrenceMarkers()
+        onSearchMatchesChanged?()
+    }
+
+    func overviewRows(for ranges: [NSRange]) -> [Int] {
+        // UTF-16 ranges already include diff placeholders. Do not create glyph
+        // layout for offscreen matches just to put them in the overview.
+        func row(at index: Int) -> Int {
+            var low = 0, high = offsets.count
+            while low < high {
+                let middle = (low + high) / 2
+                if offsets[middle] <= index { low = middle + 1 } else { high = middle }
+            }
+            return max(0, low - 1)
+        }
+        return ranges.flatMap { range -> [Int] in
+            guard !offsets.isEmpty, range.length > 0 else { return [] }
+            return Array(row(at: range.location)...row(at: NSMaxRange(range) - 1))
+        }
+    }
+
+    private func updateOccurrenceMarkers() {
+        diffOverview.showOccurrences(rows: overviewRows(for: text.occurrenceRanges))
+        diffOverview.showSearch(rows: overviewRows(for: text.searchRanges) + additionalSearchRows,
+                                currentRows: overviewRows(for: text.currentSearchRange.map { [$0] } ?? []) + additionalCurrentSearchRows)
+    }
+
     func show(lines: [CodeLine], path: String, title: String, detail: String, showsHeader: Bool = true) {
+        onWillReplaceText?()
+        setSearchMatches([])
         text.isEditable = false
         text.undoManager?.removeAllActions()
         text.cancelNavigationFlash()

@@ -24,7 +24,11 @@ struct DiffOverviewMark: Equatable {
 
 /// A narrow change overview and draggable viewport, rather than a second code renderer.
 final class DiffOverview: NSView {
+    static let preferredWidth: CGFloat = 60
     private(set) var marks: [DiffOverviewMark] = []
+    private(set) var occurrenceRows: [Int] = []
+    private(set) var searchRows: [Int] = []
+    private(set) var currentSearchRows: [Int] = []
     private(set) var documentHeight: CGFloat = 1
     private(set) var visibleHeight: CGFloat = 1
     private(set) var scrollY: CGFloat = 0
@@ -49,7 +53,27 @@ final class DiffOverview: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func show(rows: [DiffRow]) { marks = DiffOverviewMark.make(rows); dragOffset = nil; needsDisplay = true }
+    func show(rows: [DiffRow], isDiff: Bool = true) {
+        marks = DiffOverviewMark.make(rows)
+        occurrenceRows = []
+        searchRows = []; currentSearchRows = []
+        dragOffset = nil
+        setAccessibilityLabel(isDiff ? "Diff overview" : "Code overview")
+        setAccessibilityHelp("Yellow: highlighted symbol occurrences. Cyan: search matches. " + (isDiff ? "Red: deleted lines. Green: added lines. " : "") + "Click or drag to scroll.")
+        toolTip = isDiff ? "Diff overview · Yellow: symbol occurrences · Cyan: search matches · Red/green: Git changes" : "Code overview · Yellow: symbol occurrences · Cyan: search matches"
+        needsDisplay = true
+    }
+
+    func showOccurrences(rows: [Int]) {
+        occurrenceRows = Array(Set(rows.filter { $0 >= 0 })).sorted()
+        needsDisplay = true
+    }
+    func showSearch(rows: [Int], currentRows: [Int]) {
+        searchRows = Array(Set(rows.filter { $0 >= 0 })).sorted()
+        let matches = Set(searchRows)
+        currentSearchRows = Array(Set(currentRows.filter { matches.contains($0) })).sorted()
+        needsDisplay = true
+    }
     func update(documentHeight: CGFloat, visibleHeight: CGFloat, scrollY: CGFloat) {
         self.documentHeight = max(1, documentHeight)
         self.visibleHeight = max(0, visibleHeight)
@@ -59,7 +83,7 @@ final class DiffOverview: NSView {
     private var maximumScroll: CGFloat { max(0, documentHeight - visibleHeight) }
     private var track: NSRect { bounds.insetBy(dx: 1, dy: 2) }
     var viewportRect: NSRect {
-        let height = min(track.height, max(18, track.height * min(1, visibleHeight / documentHeight)))
+        let height = min(track.height, max(80, track.height * min(1, visibleHeight / documentHeight)))
         let y = maximumScroll > 0 ? scrollY / maximumScroll * (track.height - height) : 0
         return NSRect(x: track.minX, y: track.minY + y, width: track.width, height: height)
     }
@@ -72,17 +96,37 @@ final class DiffOverview: NSView {
         defer { NSGraphicsContext.restoreGraphicsState() }
         bounds.clip()
         Theme.background.setFill(); bounds.intersection(dirtyRect).fill()
-        Theme.muted.withAlphaComponent(dragOffset != nil ? 0.28 : hovered ? 0.22 : 0.13).setFill()
+        Theme.text.withAlphaComponent(dragOffset != nil ? 0.52 : hovered ? 0.42 : 0.32).setFill()
         NSBezierPath(roundedRect: viewportRect, xRadius: 2, yRadius: 2).fill()
+        // Marker thickness is independent of the wider navigation hit target.
+        let laneWidth: CGFloat = 4
+        let diffLeft = track.maxX - laneWidth * 2 - 1
         for mark in marks {
-            let y = min(track.maxY - 3, track.minY + (Theme.Code.verticalInset + CGFloat(mark.rows.lowerBound) * Theme.Code.lineHeight) / documentHeight * track.height)
-            let height = max(3, CGFloat(mark.rows.count) * Theme.Code.lineHeight / documentHeight * track.height)
-            let laneWidth = max(1, (track.width - 3) / 2)
-            let rect = NSRect(x: mark.removed ? track.minX + 1 : track.maxX - laneWidth - 1,
-                              y: y, width: laneWidth, height: min(height, track.maxY - y))
+            let stripe = markerRect(rows: mark.rows)
+            let rect = NSRect(x: mark.removed ? diffLeft : diffLeft + laneWidth,
+                              y: stripe.minY, width: laneWidth, height: stripe.height)
             (mark.removed ? Theme.red : Theme.green).setFill()
             rect.fill()
         }
+        // Search has its own left lane; it never overwrites semantic yellow.
+        for (rows, color) in [(searchRows, Theme.searchMatch), (currentSearchRows, Theme.currentSearchMatch)] {
+            color.setFill()
+            for row in rows {
+                let stripe = markerRect(rows: row..<(row + 1))
+                NSRect(x: track.minX + 1, y: stripe.minY, width: laneWidth, height: stripe.height).fill()
+            }
+        }
+        Theme.occurrence.setFill()
+        for row in occurrenceRows {
+            let stripe = markerRect(rows: row..<(row + 1))
+            NSRect(x: track.midX - laneWidth / 2, y: stripe.minY, width: laneWidth, height: stripe.height).fill()
+        }
+    }
+
+    private func markerRect(rows: Range<Int>) -> NSRect {
+        let y = min(track.maxY - 3, track.minY + (Theme.Code.verticalInset + CGFloat(rows.lowerBound) * Theme.Code.lineHeight) / documentHeight * track.height)
+        let height = max(3, CGFloat(rows.count) * Theme.Code.lineHeight / documentHeight * track.height)
+        return NSRect(x: track.minX, y: y, width: track.width, height: min(height, track.maxY - y))
     }
 
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }

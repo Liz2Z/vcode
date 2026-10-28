@@ -2,9 +2,62 @@ import AppKit
 
 final class CodeTextView: NSTextView {
     var onTextChange: (() -> Void)?
+    var onWillChangeText: (() -> Void)?
+    var onFindAction: ((NSTextFinder.Action) -> Void)?
+    var isPointerObscured: ((NSPoint) -> Bool)?
+    private(set) var searchRanges: [NSRange] = []
+    private(set) var currentSearchRange: NSRange?
+    private(set) var isFindSelection = false
+
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        isFindSelection = false
+        selectedTextAttributes = [.backgroundColor: NSColor.selectedTextBackgroundColor, .foregroundColor: NSColor.selectedTextColor]
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        setNeedsDisplay(visibleRect)
+    }
+
+    func selectSearchMatch(_ range: NSRange) {
+        setSelectedRange(range)
+        // Navigation keeps a real selection for copy and subsequent Find actions,
+        // but its appearance comes from the dedicated current-match renderer.
+        isFindSelection = true
+        selectedTextAttributes = [.backgroundColor: NSColor.clear]
+        setNeedsDisplay(visibleRect)
+    }
+
+    func setCurrentSearchMatch(_ range: NSRange?) {
+        currentSearchRange = range.flatMap { searchRanges.contains($0) ? $0 : nil }
+        (layoutManager as? CodeLayoutManager)?.currentSearchRange = currentSearchRange
+        setNeedsDisplay(visibleRect)
+    }
+
+    override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        guard super.shouldChangeText(in: affectedCharRange, replacementString: replacementString) else { return false }
+        onWillChangeText?()
+        return true
+    }
+
+    override func performTextFinderAction(_ sender: Any?) {
+        guard let item = sender as? NSValidatedUserInterfaceItem,
+              let action = NSTextFinder.Action(rawValue: item.tag) else { return }
+        onFindAction?(action)
+    }
+
+    func setSearchMatches(_ ranges: [NSRange]) {
+        let length = (string as NSString).length
+        searchRanges = ranges.filter { $0.location >= 0 && $0.length > 0 && $0.location <= length && $0.length <= length - $0.location }
+        (layoutManager as? CodeLayoutManager)?.searchRanges = searchRanges
+        setCurrentSearchMatch(nil)
+        if isFindSelection {
+            isFindSelection = false
+            selectedTextAttributes = [.backgroundColor: NSColor.selectedTextBackgroundColor, .foregroundColor: NSColor.selectedTextColor]
+        }
+        setNeedsDisplay(visibleRect)
+    }
 
     override func didChangeText() {
         super.didChangeText()
+        resetSymbolFeedback()
         onTextChange?()
     }
 
@@ -15,6 +68,7 @@ final class CodeTextView: NSTextView {
     var onHoverMoved: ((NSPoint) -> Void)?
     var onDefinitionProbe: ((Int, @escaping (Bool) -> Void) -> Void)?
     var onSymbolClick: ((Int, @escaping ([NSRange]) -> Void) -> Void)?
+    var onOccurrencesChanged: (([NSRange]) -> Void)?
     private var hoverWork: DispatchWorkItem?
     private var tracking: NSTrackingArea?
     private(set) var hoveredIdentifier: NSRange?
@@ -112,19 +166,20 @@ final class CodeTextView: NSTextView {
     private func setOccurrences(_ ranges: [NSRange]) {
         occurrenceRanges = ranges.filter { $0.location >= 0 && $0.length > 0 && $0.location <= (string as NSString).length && $0.length <= (string as NSString).length - $0.location }
         (layoutManager as? CodeLayoutManager)?.symbolRanges = occurrenceRanges
+        onOccurrencesChanged?(occurrenceRanges)
         // Only redraw the visible viewport; thousands of occurrences must not
         // force text layout for the whole document on every selection.
         setNeedsDisplay(visibleRect)
     }
 
-    private func clearCommandFeedback() {
+    private func clearCommandFeedback(restoreCursor: Bool = true) {
         commandToken = UUID()
         commandWork?.cancel()
         commandWork = nil
         if let range = underlinedIdentifier {
             layoutManager?.removeTemporaryAttribute(.underlineStyle, forCharacterRange: range)
             layoutManager?.removeTemporaryAttribute(.underlineColor, forCharacterRange: range)
-            NSCursor.iBeam.set()
+            if restoreCursor { NSCursor.iBeam.set() }
         }
         underlinedIdentifier = nil
         commandCandidate = nil
@@ -214,8 +269,22 @@ final class CodeTextView: NSTextView {
         return range
     }
 
-    override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); updateHover(event) }
-    override func mouseMoved(with event: NSEvent) { super.mouseMoved(with: event); updateHover(event) }
+    override func mouseEntered(with event: NSEvent) {
+        guard !skipObscuredPointer(at: event.locationInWindow) else { return }
+        super.mouseEntered(with: event); updateHover(event)
+    }
+    override func mouseMoved(with event: NSEvent) {
+        guard !skipObscuredPointer(at: event.locationInWindow) else { return }
+        super.mouseMoved(with: event); updateHover(event)
+    }
+
+    private func skipObscuredPointer(at windowPoint: NSPoint) -> Bool {
+        guard isPointerObscured?(windowPoint) == true else { return false }
+        clearCommandFeedback(restoreCursor: false)
+        clearInspectionFeedback()
+        onHoverInvalidated?()
+        return true
+    }
 
     private func updateHover(_ event: NSEvent) {
         guard !isEditable else { return }
@@ -224,7 +293,7 @@ final class CodeTextView: NSTextView {
     }
 
     private func updatePointer(at point: NSPoint, modifiers: NSEvent.ModifierFlags) {
-        guard !isEditable else { return }
+        guard !isEditable, !skipObscuredPointer(at: convert(point, to: nil)) else { return }
         let wasCommandHeld = commandHeld
         commandHeld = modifiers.contains(.command)
         if commandHeld {
@@ -237,8 +306,9 @@ final class CodeTextView: NSTextView {
     }
 
     override func flagsChanged(with event: NSEvent) {
-        super.flagsChanged(with: event)
         guard let window else { clearCommandFeedback(); return }
+        guard !skipObscuredPointer(at: window.mouseLocationOutsideOfEventStream) else { return }
+        super.flagsChanged(with: event)
         let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
         updatePointer(at: point, modifiers: event.modifierFlags)
     }
@@ -273,6 +343,7 @@ final class CodeTextView: NSTextView {
     }
 
     override func mouseExited(with event: NSEvent) {
+        guard !skipObscuredPointer(at: event.locationInWindow) else { return }
         clearCommandFeedback()
         clearInspectionFeedback()
         onHoverExited?()
@@ -285,6 +356,7 @@ final class CodeTextView: NSTextView {
         clearInspectionFeedback()
         onHoverInvalidated?()
         if !event.modifierFlags.contains(.command) { clearCommandFeedback() }
+        if event.keyCode == 53 { onFindAction?(.hideFindInterface) }
         if event.keyCode != 53 { super.keyDown(with: event) }
     }
 

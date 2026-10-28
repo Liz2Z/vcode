@@ -584,12 +584,18 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         if item.action == #selector(newTextTab) { return session.state != nil && !session.isSwitching }
         if item.action == #selector(saveText) || item.action == #selector(saveTextAs) { return workspace.editor.isEditingDraft && !session.isSwitching }
         if item.action == #selector(showQuickOpen) || item.action == #selector(showProjectSearch) { return session.state != nil && !session.isSwitching }
+        if item.action == #selector(findInEditor) || item.action == #selector(findNext) || item.action == #selector(findPrevious) {
+            return workspace.editor.canFind && !session.isSwitching
+        }
         if item.action == #selector(goBack) { return !session.isSwitching && workspace.editor.canGoBack }
         if item.action == #selector(goForward) { return !session.isSwitching && workspace.editor.canGoForward }
         return true
     }
     @objc func nextChange() { workspace.editor.navigateChange(forward: true) }
     @objc func previousChange() { workspace.editor.navigateChange(forward: false) }
+    @objc func findInEditor() { dismissCodeHover(); dismissQuickOpen(); dismissShortcuts(); workspace.editor.performFind(.showFindInterface) }
+    @objc func findNext() { workspace.editor.performFind(.nextMatch) }
+    @objc func findPrevious() { workspace.editor.performFind(.previousMatch) }
     @objc func showBranches() { showPicker(.branches, anchor: workspace.header.branchButton) }
     @objc func showWorktrees() { showPicker(.worktrees, anchor: workspace.header.worktreeButton) }
 

@@ -6,7 +6,7 @@ final class DiffOverviewTests: XCTestCase {
     override func setUp() { _ = NSApplication.shared }
 
     func testExpandedDirtyRectCannotPaintOverAdjacentCodeOrHeader() throws {
-        let map = DiffOverview(frame: NSRect(x: 0, y: 0, width: 14, height: 100))
+        let map = DiffOverview(frame: NSRect(x: 0, y: 0, width: 60, height: 100))
         map.update(documentHeight: 1000, visibleHeight: 200, scrollY: 0)
         let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 160, pixelsHigh: 160,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -47,10 +47,10 @@ final class DiffOverviewTests: XCTestCase {
     }
 
     func testViewportEndpointsAndMinimumGrabSizeOnVeryLongAndShortFiles() {
-        let map = DiffOverview(frame: NSRect(x: 0, y: 0, width: 14, height: 500))
+        let map = DiffOverview(frame: NSRect(x: 0, y: 0, width: 60, height: 500))
         map.update(documentHeight: 1_000_000, visibleHeight: 400, scrollY: 0)
         XCTAssertEqual(map.viewportRect.minY, 2)
-        XCTAssertEqual(map.viewportRect.height, 18)
+        XCTAssertEqual(map.viewportRect.height, 80)
         map.update(documentHeight: 1_000_000, visibleHeight: 400, scrollY: 999_600)
         XCTAssertEqual(map.viewportRect.maxY, 498, accuracy: 0.01)
         map.update(documentHeight: 100, visibleHeight: 400, scrollY: 90)
@@ -103,8 +103,10 @@ final class DiffOverviewTests: XCTestCase {
                 window.setContentSize(size)
                 editor.layoutSubtreeIfNeeded()
                 let pane = editor.right
-                XCTAssertEqual(pane.diffOverview.isHidden, !diff)
-                XCTAssertEqual(pane.bounds.width - pane.scroll.frame.width, diff ? 14 : 0, accuracy: 0.5)
+                XCTAssertFalse(pane.diffOverview.isHidden)
+                XCTAssertFalse(pane.scroll.hasVerticalScroller)
+                XCTAssertEqual(pane.bounds.width - pane.scroll.frame.width, 60, accuracy: 0.5)
+                if !diff { XCTAssertTrue(pane.diffOverview.marks.isEmpty) }
                 XCTAssertEqual(pane.diffOverview.bounds.height, pane.scroll.bounds.height, accuracy: 0.5)
                 for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                     pane.appearance = NSAppearance(named: appearance)
@@ -122,6 +124,117 @@ final class DiffOverviewTests: XCTestCase {
         editor.reset()
         XCTAssertTrue(editor.right.diffOverview.isHidden)
         XCTAssertTrue(editor.right.diffOverview.marks.isEmpty)
+    }
+
+    func testSemanticOccurrencesFollowDisplayedUTF16RowsAndClearStaleReplies() throws {
+        let pane = CodePane()
+        let blank = CodeLine(number: nil, text: "", kind: .placeholder)
+        let lines = [CodeLine(number: 1, text: "const value = 1;", kind: .unchanged), blank,
+                     CodeLine(number: 2, text: "/* 中文😀 */ value + value;", kind: .added),
+                     CodeLine(number: 3, text: "// value is only a comment", kind: .unchanged),
+                     CodeLine(number: 4, text: "value;", kind: .unchanged)]
+        pane.showDiffOverview(lines.map { DiffRow(left: blank, right: $0) })
+        pane.show(lines: lines, path: "main.ts", title: "", detail: "")
+        let declaration = try XCTUnwrap(pane.characterRange(startLine: 0, startCharacter: 6, endLine: 0, endCharacter: 11))
+        let firstUse = try XCTUnwrap(pane.characterRange(startLine: 1, startCharacter: 11, endLine: 1, endCharacter: 16))
+        let secondUse = try XCTUnwrap(pane.characterRange(startLine: 1, startCharacter: 19, endLine: 1, endCharacter: 24))
+        XCTAssertEqual((pane.text.string as NSString).substring(with: firstUse), "value")
+        XCTAssertEqual((pane.text.string as NSString).substring(with: secondUse), "value")
+        let lastUse = try XCTUnwrap(pane.characterRange(startLine: 3, startCharacter: 0, endLine: 3, endCharacter: 5))
+        var replies: [([NSRange]) -> Void] = []
+        pane.text.onSymbolClick = { _, reply in replies.append(reply) }
+        pane.text.highlightSymbol(at: declaration.location)
+        pane.text.highlightSymbol(at: lastUse.location)
+        replies[0]([declaration])
+        XCTAssertTrue(pane.diffOverview.occurrenceRows.isEmpty)
+        replies[1]([lastUse, secondUse, firstUse, declaration, declaration])
+        XCTAssertEqual(pane.diffOverview.occurrenceRows, [0, 2, 4], "Use displayed rows, skip placeholders and deduplicate same-line occurrences")
+        XCTAssertEqual(pane.text.occurrenceRanges.count, 4, "The overview must use exactly the semantic ranges, never scan same words in comments")
+        pane.text.clearInspectionFeedback()
+        XCTAssertEqual(pane.diffOverview.occurrenceRows, [0, 2, 4])
+        pane.text.highlightSymbol(at: nil)
+        XCTAssertTrue(pane.diffOverview.occurrenceRows.isEmpty)
+        pane.text.highlightSymbol(at: declaration.location)
+        pane.show(lines: [lines[0]], path: "other.ts", title: "", detail: "")
+        replies[2]([declaration])
+        XCTAssertTrue(pane.diffOverview.occurrenceRows.isEmpty)
+    }
+
+    func testSourceOccurrencesUseSameRailAndRemainIndependentAcrossEditors() throws {
+        let (editor, window, snapshot) = makeEditor()
+        defer { withExtendedLifetime(window) {} }
+        editor.prepare(path: snapshot.path, diff: false, isGit: true)
+        let source = FileSnapshot(path: snapshot.path, before: "", after: snapshot.after, rows: [], message: nil, isBinary: false)
+        editor.show(source, diff: false, preserveScroll: false)
+        editor.layoutSubtreeIfNeeded()
+        let pane = editor.right
+        let range = (pane.text.string as NSString).range(of: "new200")
+        pane.text.onSymbolClick = { _, reply in reply([range]) }
+        pane.text.highlightSymbol(at: range.location)
+        XCTAssertEqual(pane.diffOverview.occurrenceRows, [200])
+        XCTAssertTrue(pane.diffOverview.marks.isEmpty)
+        XCTAssertEqual(pane.diffOverview.accessibilityLabel(), "Code overview")
+        pane.diffOverview.setAccessibilityValue(0.5)
+        XCTAssertGreaterThan(pane.scroll.contentView.bounds.minY, 1000)
+        XCTAssertEqual(pane.diffOverview.occurrenceRows, [200])
+        let other = CodePane()
+        other.showDiffOverview(nil, source: true)
+        other.show(lines: [CodeLine(number: 1, text: "const new200 = 0;", kind: .unchanged)], path: "other.ts", title: "", detail: "")
+        XCTAssertTrue(other.diffOverview.occurrenceRows.isEmpty)
+        editor.reset()
+        XCTAssertTrue(pane.diffOverview.isHidden)
+        XCTAssertTrue(pane.diffOverview.occurrenceRows.isEmpty)
+    }
+
+    func testOccurrenceLaneRemainsVisibleBesideGitMarkersInBothThemes() throws {
+        let map = DiffOverview(frame: NSRect(x: 0, y: 0, width: 60, height: 100))
+        let row = DiffRow(left: CodeLine(number: 1, text: "old", kind: .removed), right: CodeLine(number: 1, text: "new", kind: .added))
+        map.show(rows: [row])
+        map.showOccurrences(rows: [0])
+        map.showSearch(rows: [0, 2], currentRows: [2])
+        map.update(documentHeight: 100, visibleHeight: 100, scrollY: 0)
+        for width in [30, 60, 100] {
+        map.setFrameSize(NSSize(width: width, height: 100))
+        for theme in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearance = try XCTUnwrap(NSAppearance(named: theme))
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: 100,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            let context = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: bitmap))
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = context
+            appearance.performAsCurrentDrawingAppearance { map.draw(map.bounds) }
+            context.flushGraphics()
+            NSGraphicsContext.restoreGraphicsState()
+            // All three categories occupy the same line but separate columns.
+            for (x, expected) in [(width - 8, Theme.red), (width / 2, Theme.occurrence), (width - 4, Theme.green), (3, Theme.searchMatch)] {
+                var resolved: NSColor!
+                appearance.performAsCurrentDrawingAppearance { resolved = expected.usingColorSpace(.deviceRGB) }
+                let actual = try XCTUnwrap(bitmap.colorAt(x: x, y: 83)?.usingColorSpace(.deviceRGB))
+                XCTAssertEqual(actual.redComponent, resolved.redComponent, accuracy: 0.02)
+                XCTAssertEqual(actual.greenComponent, resolved.greenComponent, accuracy: 0.02)
+                XCTAssertEqual(actual.blueComponent, resolved.blueComponent, accuracy: 0.02)
+                let matchingPixels = (0..<width).filter { column in
+                    guard let color = bitmap.colorAt(x: column, y: 83)?.usingColorSpace(.deviceRGB) else { return false }
+                    return abs(color.redComponent - resolved.redComponent) < 0.02 &&
+                        abs(color.greenComponent - resolved.greenComponent) < 0.02 &&
+                        abs(color.blueComponent - resolved.blueComponent) < 0.02
+                }
+                XCTAssertEqual(matchingPixels.count, 4, "Marker thickness must stay fixed while the navigation rail widens")
+                if x == width - 8 {
+                    XCTAssertEqual(matchingPixels.last, width - 7, "Deleted markers touch the adjacent added lane")
+                } else if x == width - 4 {
+                    XCTAssertEqual(matchingPixels.first, width - 6)
+                }
+            }
+            var current: NSColor!
+            appearance.performAsCurrentDrawingAppearance { current = Theme.currentSearchMatch.usingColorSpace(.deviceRGB) }
+            let active = try XCTUnwrap(bitmap.colorAt(x: 3, y: 39)?.usingColorSpace(.deviceRGB))
+            XCTAssertEqual(active.redComponent, current.redComponent, accuracy: 0.02)
+            XCTAssertEqual(active.greenComponent, current.greenComponent, accuracy: 0.02)
+            XCTAssertEqual(active.blueComponent, current.blueComponent, accuracy: 0.02)
+        }
+        }
     }
 
     private func makeEditor() -> (EditorView, NSWindow, FileSnapshot) {

@@ -51,7 +51,9 @@ final class PresentationTests: XCTestCase {
         func surfaces(_ view: NSView) -> [GlassSurface] {
             (view as? GlassSurface).map { [$0] } ?? view.subviews.flatMap(surfaces)
         }
-        XCTAssertEqual(surfaces(workspace).count, 1, "Keep glass to one workspace surface")
+        let findSurfaces = surfaces(workspace.editor.findBar)
+        XCTAssertEqual(findSurfaces.count, 1, "The floating Find controls use their own native glass surface")
+        XCTAssertEqual(surfaces(workspace).count, 2, "Glass belongs to the sidebar and floating Find, not the reading body")
     }
 
     func testRepositoryControlsAndBreadcrumbsFitNarrowAndWideWindows() throws {

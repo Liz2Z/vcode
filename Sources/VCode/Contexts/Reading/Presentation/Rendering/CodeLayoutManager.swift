@@ -5,6 +5,8 @@ final class CodeLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     var navigationRange: NSRange?
     var navigationAlpha: CGFloat = 0
     var symbolRanges: [NSRange] = []
+    var searchRanges: [NSRange] = []
+    var currentSearchRange: NSRange?
     var codeFont = Theme.Code.font()
 
     override init() {
@@ -44,22 +46,86 @@ final class CodeLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             }
         }
         let visibleCharacters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
-        for range in symbolRanges where range.length > 0 && NSMaxRange(range) <= (textStorage?.length ?? 0) && NSIntersectionRange(range, visibleCharacters).length > 0 {
-            drawHighlight(range, alpha: 0.2, glyphsToShow: glyphsToShow, container: container, origin: origin)
+        func visible(_ ranges: [NSRange]) -> [NSRange] {
+            ranges.filter { $0.location >= 0 && $0.length > 0 && $0.location <= (textStorage?.length ?? 0) &&
+                $0.length <= (textStorage?.length ?? 0) - $0.location && NSIntersectionRange($0, visibleCharacters).length > 0 }
         }
-        if let range = navigationRange, range.length > 0, NSMaxRange(range) <= (textStorage?.length ?? 0) {
-            drawHighlight(range, alpha: navigationAlpha, glyphsToShow: glyphsToShow, container: container, origin: origin)
+        let searches = visible(searchRanges)
+        let nativeSelections = (view as? CodeTextView)?.isFindSelection == true ? [] : visible(view.selectedRanges.map(\.rangeValue))
+        let selectionRects = nativeSelections.flatMap { highlightRects($0, glyphsToShow: glyphsToShow, container: container, origin: origin) }
+        let searchRects = searches.flatMap { highlightRects($0, glyphsToShow: glyphsToShow, container: container, origin: origin) }
+        // Apply one semantic background per character. Search wins over symbol
+        // feedback; native user selection wins over both, without mixed fills.
+        for range in visible(symbolRanges) {
+            for part in Self.uncovered(range, excluding: searches + nativeSelections) {
+                drawHighlight(part, color: Theme.occurrence, alpha: 0.2, excluding: searchRects + selectionRects,
+                              glyphsToShow: glyphsToShow, container: container, origin: origin)
+            }
+        }
+        if let range = navigationRange, !visible([range]).isEmpty {
+            for part in Self.uncovered(range, excluding: searches + nativeSelections) {
+                drawHighlight(part, color: Theme.accent, alpha: navigationAlpha, excluding: searchRects + selectionRects,
+                              glyphsToShow: glyphsToShow, container: container, origin: origin)
+            }
+        }
+        for range in searches {
+            guard !Self.uncovered(range, excluding: nativeSelections).isEmpty else { continue }
+            let current = range == currentSearchRange
+            drawHighlight(range, color: current ? Theme.currentSearchMatch : Theme.searchMatch,
+                          alpha: current ? 0.3 : 0.16, bordered: current, excluding: selectionRects,
+                          glyphsToShow: glyphsToShow, container: container, origin: origin)
         }
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
     }
 
-    private func drawHighlight(_ range: NSRange, alpha: CGFloat, glyphsToShow: NSRange, container: NSTextContainer, origin: NSPoint) {
-        guard alpha > 0 else { return }
-        let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-        if NSIntersectionRange(glyphs, glyphsToShow).length > 0 {
-            let rect = boundingRect(forGlyphRange: glyphs, in: container).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -3, dy: -1)
-            Theme.accent.withAlphaComponent(alpha).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
+    static func uncovered(_ range: NSRange, excluding exclusions: [NSRange]) -> [NSRange] {
+        var parts = [range]
+        for exclusion in exclusions {
+            parts = parts.flatMap { part in
+                let overlap = NSIntersectionRange(part, exclusion)
+                guard overlap.length > 0 else { return [part] }
+                var result: [NSRange] = []
+                if overlap.location > part.location { result.append(NSRange(location: part.location, length: overlap.location - part.location)) }
+                if NSMaxRange(overlap) < NSMaxRange(part) { result.append(NSRange(location: NSMaxRange(overlap), length: NSMaxRange(part) - NSMaxRange(overlap))) }
+                return result
+            }
+            if parts.isEmpty { break }
+        }
+        return parts
+    }
+
+    private func highlightRects(_ range: NSRange, glyphsToShow: NSRange, container: NSTextContainer, origin: NSPoint, padding: CGFloat = 3) -> [NSRect] {
+        let glyphs = NSIntersectionRange(glyphRange(forCharacterRange: range, actualCharacterRange: nil), glyphsToShow)
+        guard glyphs.length > 0 else { return [] }
+        var rects: [NSRect] = []
+        enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0), in: container) { rect, _ in
+            rects.append(rect.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -padding, dy: padding == 0 ? 0 : -1))
+        }
+        return rects
+    }
+
+    private func drawHighlight(_ range: NSRange, color: NSColor, alpha: CGFloat, bordered: Bool = false, excluding exclusions: [NSRect], glyphsToShow: NSRange, container: NSTextContainer, origin: NSPoint) {
+        guard alpha > 0, let view = container.textView else { return }
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        // Clip exclusions separately, so intersecting search and selection holes
+        // never cancel each other as they would in a single even-odd path.
+        for exclusion in exclusions {
+            let clip = NSBezierPath(rect: view.visibleRect.insetBy(dx: -4, dy: -2))
+            clip.appendRect(exclusion)
+            clip.windingRule = .evenOdd
+            clip.addClip()
+        }
+        for rect in highlightRects(range, glyphsToShow: glyphsToShow, container: container, origin: origin) {
+            let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
+            color.withAlphaComponent(alpha).setFill()
+            path.fill()
+            if bordered {
+                color.setStroke()
+                let outline = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 3, yRadius: 3)
+                outline.lineWidth = 1
+                outline.stroke()
+            }
         }
     }
 }

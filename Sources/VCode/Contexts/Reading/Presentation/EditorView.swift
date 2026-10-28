@@ -7,6 +7,8 @@ final class EditorView: NSView, NSSplitViewDelegate {
     let breadcrumbs = EditorBreadcrumbs()
     let welcome = WelcomeView()
     let markdown = MarkdownPreview()
+    let findBar = EditorFindBar()
+    private(set) lazy var find = EditorFind(bar: findBar)
     let backButton = Theme.button("arrow.left", tooltip: "Go Back (⌃−)", target: nil, action: nil)
     let forwardButton = Theme.button("arrow.right", tooltip: "Go Forward (⌃⇧−)", target: nil, action: nil)
     let splitEditorButton = Theme.button("rectangle.split.2x1", tooltip: "Split Editor Right (⌘\\)", target: nil, action: nil)
@@ -22,6 +24,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     private var draftCloseSheet: DraftCloseSheet?
     private var workspaceOpen = false
     var activeDocument: ReadingDocument? { session.activeDocument }
+    var canFind: Bool { activeDocument != nil && (!split.isHidden || showingMarkdownPreview) }
     var isEditingDraft: Bool { session.activeDocument?.isDraft == true }
     var onDraftActivated: (() -> Void)?
     private var snapshot: FileSnapshot?
@@ -76,12 +79,15 @@ final class EditorView: NSView, NSSplitViewDelegate {
             button.widthAnchor.constraint(equalToConstant: 28).isActive = true
             button.heightAnchor.constraint(equalToConstant: 28).isActive = true
         }
-        add(tabs, breadcrumbs, split, markdown, message, welcome, navigation, groupActions)
+        add(tabs, breadcrumbs, split, markdown, message, welcome, findBar, navigation, groupActions)
+        let findWidth = findBar.widthAnchor.constraint(equalToConstant: 420)
+        findWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             navigation.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4), navigation.topAnchor.constraint(equalTo: topAnchor, constant: 8), navigation.heightAnchor.constraint(equalToConstant: 32),
             tabs.topAnchor.constraint(equalTo: topAnchor), tabs.leadingAnchor.constraint(equalTo: navigation.trailingAnchor, constant: 4), tabs.trailingAnchor.constraint(equalTo: groupActions.leadingAnchor, constant: -4), tabs.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
             groupActions.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8), groupActions.topAnchor.constraint(equalTo: topAnchor, constant: 8), groupActions.heightAnchor.constraint(equalToConstant: 32),
             breadcrumbs.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 4), breadcrumbs.leadingAnchor.constraint(equalTo: leadingAnchor), breadcrumbs.trailingAnchor.constraint(equalTo: trailingAnchor), breadcrumbs.heightAnchor.constraint(equalToConstant: 28),
+            findBar.topAnchor.constraint(equalTo: right.scroll.topAnchor, constant: 8), findBar.trailingAnchor.constraint(equalTo: right.scroll.trailingAnchor, constant: -8), findBar.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8), findWidth,
             split.topAnchor.constraint(equalTo: breadcrumbs.bottomAnchor, constant: 4), split.leadingAnchor.constraint(equalTo: leadingAnchor), split.trailingAnchor.constraint(equalTo: trailingAnchor), split.bottomAnchor.constraint(equalTo: bottomAnchor),
             markdown.topAnchor.constraint(equalTo: split.topAnchor), markdown.leadingAnchor.constraint(equalTo: split.leadingAnchor), markdown.trailingAnchor.constraint(equalTo: split.trailingAnchor), markdown.bottomAnchor.constraint(equalTo: split.bottomAnchor),
             message.centerXAnchor.constraint(equalTo: split.centerXAnchor), message.centerYAnchor.constraint(equalTo: split.centerYAnchor), message.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 30), message.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -30),
@@ -111,7 +117,34 @@ final class EditorView: NSView, NSSplitViewDelegate {
         breadcrumbs.previewButton.target = self; breadcrumbs.previewButton.action = #selector(showMarkdownPreview)
         left.onScroll = { [weak self] point in if self?.showingDiff == true { self?.right.sync(to: point) } }
         right.onScroll = { [weak self] point in if self?.showingDiff == true { self?.left.sync(to: point) } }
-        right.text.onTextChange = { [weak self] in self?.draftChanged() }
+        right.text.onTextChange = { [weak self] in
+            guard let self else { return }
+            self.draftChanged()
+            self.find.didChangeText(in: self.right)
+        }
+        for pane in [left, right] {
+            pane.text.isPointerObscured = { [weak self] point in
+                guard let self, !self.findBar.isHiddenOrHasHiddenAncestor else { return false }
+                return self.findBar.bounds.contains(self.findBar.convert(point, from: nil))
+            }
+            pane.text.onFindAction = { [weak self, weak pane] action in
+                guard let self, let pane else { return }
+                self.find.perform(action, in: pane)
+            }
+            pane.text.onWillChangeText = { [weak self, weak pane] in
+                guard let self, let pane else { return }
+                self.find.willChangeText(in: pane)
+            }
+            pane.onWillReplaceText = { [weak self, weak pane] in
+                guard let self, let pane else { return }
+                self.find.willChangeText(in: pane, replacing: true)
+            }
+        }
+        left.onSearchMatchesChanged = { [weak self] in
+            guard let self else { return }
+            self.right.additionalSearchRows = self.showingDiff ? self.left.overviewRows(for: self.left.text.searchRanges) : []
+            self.right.additionalCurrentSearchRows = self.showingDiff ? self.left.overviewRows(for: self.left.text.currentSearchRange.map { [$0] } ?? []) : []
+        }
         right.text.onCursor = { [weak self] index in guard let self, let position = self.right.position(at: index) else { return }; self.onCursor?(position) }
         markdown.onRendered = { [weak self] in
             guard let self else { return }
@@ -121,6 +154,16 @@ final class EditorView: NSView, NSSplitViewDelegate {
     }
     required init?(coder: NSCoder) { fatalError() }
     override var acceptsFirstResponder: Bool { true }
+
+    func performFind(_ action: NSTextFinder.Action) {
+        guard canFind else { return }
+        if showingMarkdownPreview { showMarkdownSource() }
+        let responder = window?.firstResponder as? NSView
+        let pane: CodePane
+        if responder.map({ $0.isDescendant(of: findBar) || $0 === findBar.query.currentEditor() }) == true, let searching = find.currentPane { pane = searching }
+        else { pane = showingDiff && responder.map { $0 === left.text || $0.isDescendant(of: left) } == true ? left : right }
+        find.perform(action, in: pane)
+    }
 
     func setWorkspaceOpen(_ open: Bool) { workspaceOpen = open; welcome.show(hasWorkspace: open); splitEditorButton.isEnabled = open }
 
@@ -179,7 +222,9 @@ final class EditorView: NSView, NSSplitViewDelegate {
         }
         split.needsDisplay = true
         if !unchanged {
-            right.showDiffOverview(diff ? next.rows : nil)
+            right.additionalSearchRows = []
+            right.additionalCurrentSearchRows = []
+            right.showDiffOverview(diff ? next.rows : nil, source: !diff)
             if diff {
                 left.show(lines: next.rows.map(\.left), path: next.path, title: "Original", detail: next.comparison == .unstaged ? "INDEX" : "HEAD")
                 right.show(lines: next.rows.map(\.right), path: next.path, title: "Modified", detail: next.comparison == .staged ? "INDEX" : "WORKING TREE")
@@ -214,6 +259,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
 
     func showError(_ error: Error) { snapshot = nil; showMessage(error.localizedDescription) }
     private func showMessage(_ text: String) {
+        find.close(restoreFocus: false)
         welcome.isHidden = true
         split.isHidden = true
         markdown.isHidden = true
@@ -519,7 +565,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     @objc func showMarkdownPreview() { setMarkdownPreview(true) }
     private func setMarkdownPreview(_ preview: Bool) {
         guard let path = activePath, let snapshot, snapshot.path == path, MarkdownRenderer.supports(path), !showingDiff, snapshot.message == nil else { return }
-        if preview { markdownSourcePaths.remove(path) } else { markdownSourcePaths.insert(path) }
+        if preview { find.close(restoreFocus: false); markdownSourcePaths.remove(path) } else { markdownSourcePaths.insert(path) }
         markdown.isHidden = !preview
         split.isHidden = preview
         breadcrumbs.showMarkdownControls(true, preview: preview)
