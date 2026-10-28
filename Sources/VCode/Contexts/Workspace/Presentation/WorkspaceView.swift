@@ -118,7 +118,7 @@ final class WorkspaceView: NSView, NSSplitViewDelegate {
         header.show(state)
         explorer.show(state, changesOnly: changesOnly)
         navigation.updateChanges(count: state.changes.count)
-        status.message.stringValue = "\(state.files.count)\(state.deferredDirectories.isEmpty ? "" : "+") files  ·  \(state.changes.count) changes  ·  Read Only"
+        status.message.stringValue = "\(state.files.count)\(state.deferredDirectories.isEmpty ? "" : "+") files  ·  \(state.changes.count) changes"
     }
 
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {

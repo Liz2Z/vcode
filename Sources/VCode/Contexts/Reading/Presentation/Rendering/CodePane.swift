@@ -209,8 +209,8 @@ final class CodePane: NSView {
         text.setSelectedRange(NSRange(location: 0, length: 0))
     }
 
-    func updateEditableLines(path: String) {
-        guard text.isEditable else { return }
+    func updateEditableLines(path: String, allowReadOnly: Bool = false) {
+        guard text.isEditable || allowReadOnly else { return }
         lines = text.string.components(separatedBy: "\n").enumerated().map {
             CodeLine(number: $0.offset + 1, text: $0.element, kind: .unchanged)
         }

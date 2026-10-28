@@ -37,7 +37,19 @@ final class EditorView: NSView, NSSplitViewDelegate {
     var activeDocument: ReadingDocument? { session.activeDocument }
     var canFind: Bool { activeDocument != nil && (!split.isHidden || showingMarkdownPreview) }
     var isEditingDraft: Bool { session.activeDocument?.isDraft == true }
+    var sourceEditingAllowed = false { didSet { updateEditingAvailability() } }
+    private var hasSourceBuffer: Bool {
+        guard !isEditingDraft, !showingDiff, activeComparison == nil, let snapshot,
+              snapshot.path == activePath, let buffer = sourceEdits?.buffer(snapshot.path), message.isHidden else { return false }
+        return snapshot.editable || buffer.needsSave
+    }
     var isEditableDocument: Bool { isEditingDraft ? right.text.isEditable : activeComparison == nil && activePath.flatMap { sourceEdits?.buffer($0) } != nil && right.text.isEditable }
+    var canChangeSourceEditing: Bool { hasSourceBuffer && !editingSuspended }
+    var canSaveDocument: Bool {
+        guard !editingSuspended else { return false }
+        if isEditingDraft { return right.text.isEditable }
+        return hasSourceBuffer && (sourceEditingAllowed || activePath.flatMap { sourceEdits?.buffer($0)?.needsSave } == true)
+    }
     var onDraftActivated: (() -> Void)?
     private var snapshot: FileSnapshot?
     private var renderedDiff = false
@@ -53,7 +65,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     var canGoForward: Bool { readingHistory.canGoForward }
     var allowsNavigation = true { didSet { updateNavigationButtons() } }
     var editingSuspended = false {
-        didSet { right.text.isEditable = !editingSuspended && message.isHidden && (isEditingDraft || (!showingDiff && snapshot?.path == activePath && activeComparison == nil && activePath.flatMap { sourceEdits?.buffer($0) } != nil)) }
+        didSet { updateEditingAvailability() }
     }
     var showingMarkdownPreview: Bool { !markdown.isHidden }
     private(set) var showingDiff = false
@@ -171,6 +183,11 @@ final class EditorView: NSView, NSSplitViewDelegate {
     deinit { sourceEdits?.removeObserver(readingID) }
     override var acceptsFirstResponder: Bool { true }
 
+    private func updateEditingAvailability() {
+        let editable = !editingSuspended && message.isHidden && (isEditingDraft || (sourceEditingAllowed && hasSourceBuffer))
+        if right.text.isEditable != editable { right.text.breakUndoCoalescing(); right.text.isEditable = editable }
+    }
+
     func performFind(_ action: NSTextFinder.Action) {
         guard canFind else { return }
         if showingMarkdownPreview { showMarkdownSource() }
@@ -285,7 +302,8 @@ final class EditorView: NSView, NSSplitViewDelegate {
         }
         if let position { right.reveal(line: position.0, character: position.1, highlightDestination: highlightDestination) }
         if !markdown.isRendering { completeArrival(fallback: restoration) }
-        if buffer != nil { right.text.isEditable = !editingSuspended; showSourceLabel() }
+        updateEditingAvailability()
+        if buffer != nil { showSourceLabel() }
     }
 
     func showError(_ error: Error) { snapshot = nil; showMessage(error.localizedDescription) }
@@ -297,6 +315,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         markdown.clear()
         message.stringValue = text
         message.isHidden = false
+        updateEditingAvailability()
         breadcrumbs.showCounts(nil)
     }
 
@@ -374,6 +393,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
             right.text.documentUndoManager = nil
             right.showEditable(draft.text, path: draft.destination?.path ?? "")
             split.isHidden = false; message.isHidden = true
+            updateEditingAvailability()
             split.adjustSubviews(); right.resetScroll()
             if let location = pendingRestore { right.restore(location.right) }
             showDraftLabel()
@@ -435,7 +455,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
             sourceUndo[path]?.removeAllActions()
             right.text.breakUndoCoalescing()
             right.text.string = buffer.text
-            right.updateEditableLines(path: path)
+            right.updateEditableLines(path: path, allowReadOnly: true)
             right.restore(position)
             find.didChangeText(in: right)
         }
@@ -482,7 +502,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
     }
 
     private func saveSourceAs(alwaysChoose: Bool, completion: ((Bool) -> Void)?) {
-        guard isEditableDocument, let path = activePath, let sourceEdits else { completion?(false); return }
+        guard canSaveDocument, let path = activePath, let sourceEdits else { completion?(false); return }
         if !alwaysChoose {
             do { try sourceEdits.save(path); onSourceSaved?(path); completion?(true) }
             catch { reportEditError(error); completion?(false) }
@@ -581,7 +601,7 @@ final class EditorView: NSView, NSSplitViewDelegate {
         }
         guard let snapshot, snapshot.path == document.path,
               snapshot.comparison == document.comparison else { return nil }
-        if snapshot.message != nil && !isEditableDocument { return savedPositions[document] }
+        if snapshot.message != nil && !hasSourceBuffer { return savedPositions[document] }
         return ReadingLocation(document: document, right: right.readingPosition(), left: left.readingPosition(),
             markdown: markdown.readingPosition(), preview: showingMarkdownPreview)
     }

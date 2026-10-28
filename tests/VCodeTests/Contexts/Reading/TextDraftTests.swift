@@ -120,25 +120,26 @@ final class TextDraftTests: XCTestCase {
         let controller = WorkspaceController(history: isolatedHistoryStore())
         let view = try XCTUnwrap(controller.view as? WorkspaceView)
         defer { controller.shutdown() }
+        controller.setFileEditingAllowed(true)
         controller.open(root)
         wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in view.header.worktreeButton.title == "project" }, object: nil)], timeout: 10)
         view.editor.draftStore = store
         controller.newTextTab()
-        XCTAssertTrue(view.status.message.stringValue.contains("Editable"))
+        XCTAssertTrue(view.status.modeButton.title == "Editable")
         controller.openFile("source.txt", diff: false)
-        XCTAssertEqual(view.status.message.stringValue, "Read Only", "Mode must update before the asynchronous source load, without a code click")
+        XCTAssertEqual(view.status.modeButton.title, "Read Only", "Mode must update before the asynchronous source load, without a code click")
         wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in view.editor.isEditableDocument }, object: nil)], timeout: 10)
-        XCTAssertTrue(view.status.message.stringValue.contains("Editable"))
+        XCTAssertTrue(view.status.modeButton.title == "Editable")
         controller.newTextTab()
         let draftEditor = view.editor
         controller.splitEditorRight()
         controller.openFile("source.txt", diff: false)
-        XCTAssertEqual(view.status.message.stringValue, "Read Only")
+        XCTAssertEqual(view.status.modeButton.title, "Read Only")
         wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in view.editor.isEditableDocument }, object: nil)], timeout: 10)
         view.editorGroups.activate(draftEditor)
-        XCTAssertTrue(view.status.message.stringValue.contains("Editable"))
+        XCTAssertTrue(view.status.modeButton.title == "Editable")
         view.editorGroups.activate(view.editorGroups.editors[1])
-        XCTAssertTrue(view.status.message.stringValue.contains("Editable"))
+        XCTAssertTrue(view.status.modeButton.title == "Editable")
     }
 
     func testMissingDraftShowsErrorAndDoesNotBecomeWritableEmptyText() throws {

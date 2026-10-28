@@ -17,6 +17,7 @@ final class SourceEditTests: XCTestCase {
     }
 
     private func show(_ editor: EditorView, path: String = "main.ts", text: String = "const target = 1;\n", diff: Bool = false) {
+        editor.sourceEditingAllowed = true
         editor.prepare(path: path, diff: diff, isGit: true)
         editor.show(FileSnapshot(path: path, before: text, after: text, rows: diff ? Diff.lines(text).enumerated().map {
             DiffRow(left: CodeLine(number: $0.offset + 1, text: $0.element, kind: .unchanged), right: CodeLine(number: $0.offset + 1, text: $0.element, kind: .unchanged))
@@ -370,6 +371,7 @@ final class SourceEditTests: XCTestCase {
         try FileManager.default.removeItem(at: root.appendingPathComponent("main.ts"))
         let restored = EditorView()
         restored.sourceEdits = recoveredStore
+        restored.sourceEditingAllowed = true
         restored.restoreSession(saved)
         XCTAssertEqual(recoveredStore.dirtyPaths, ["main.ts"], "Inactive tabs must be known to exit confirmation")
         restored.prepare(path: "main.ts", diff: false, isGit: true)
@@ -405,11 +407,12 @@ final class SourceEditTests: XCTestCase {
         let host = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1300, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
         host.isReleasedWhenClosed = false; host.contentViewController = controller
         defer { controller.shutdown(); host.close() }
+        controller.setFileEditingAllowed(true)
         controller.open(root)
         waitUntil { view.header.worktreeButton.title == "project" }
         controller.openFile("main.ts", diff: false)
         waitUntil { view.editor.right.text.isEditable }
-        XCTAssertTrue(view.status.message.stringValue.contains("Editable"))
+        XCTAssertTrue(view.status.modeButton.title == "Editable")
         view.editor.right.text.insertText("// saved\n", replacementRange: NSRange(location: 0, length: 0))
         controller.saveText()
         waitUntil { view.navigation.changes.toolTip?.contains("1 files") == true }

@@ -166,6 +166,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item(edit, "Copy", #selector(NSText.copy(_:)), "c", includeInShortcutList: false)
         item(edit, "Select All", #selector(NSText.selectAll(_:)), "a", includeInShortcutList: false)
         edit.addItem(.separator())
+        item(edit, "Allow File Editing", #selector(WorkspaceController.toggleFileEditing), "", target: workspace)
+        edit.addItem(.separator())
         item(edit, "Find in Editor…", #selector(WorkspaceController.findInEditor), "f", target: workspace)
         item(edit, "Find Next", #selector(WorkspaceController.findNext), "g", target: workspace)
         item(edit, "Find Previous", #selector(WorkspaceController.findPrevious), "g", flags: [.command, .shift], target: workspace)

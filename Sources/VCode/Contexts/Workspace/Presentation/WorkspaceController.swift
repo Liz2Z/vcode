@@ -5,6 +5,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     private let session = WorkspaceSession()
     private let language = LanguageService()
     let sourceEdits: SourceEditStore
+    private(set) var allowsFileEditing = false
     private var sourceDecisionSheet: DraftCloseSheet?
     private var decidingSourceEdits = false
     private let inspection: InspectionPresenter
@@ -77,6 +78,8 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     }
 
     private func configureActions() {
+        workspace.status.modeButton.target = self
+        workspace.status.modeButton.action = #selector(toggleFileEditingFromStatus)
         workspace.openNotice.onDismiss = { [weak self] in
             self?.externalOpenFailures = []
             self?.workspace.dismissOpenNotice()
@@ -260,6 +263,7 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
 
     private func configureEditor(_ editor: EditorView) {
         editor.sourceEdits = sourceEdits
+        editor.sourceEditingAllowed = allowsFileEditing
         editor.onSourceEdited = { [weak self, weak editor] in
             guard let self, let editor else { return }
             self.syncLanguage(for: editor)
@@ -300,11 +304,12 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
             if self.workspace.editorGroups.editors.count == 2 { self.workspace.editorGroups.close(editor) }
             else { self.language.stop(); self.inspectToken = UUID() }
             self.refreshLanguageStatus()
+            self.updateEditingMode()
         }
         editor.onCursor = { [weak self, weak editor] position in
             guard let self, let editor, self.workspace.editor === editor else { return }
-            self.workspace.status.message.stringValue = "Ln \(position.line + 1), Col \(position.character + 1)  ·  \(editor.isEditableDocument ? "Editable" : "Read Only")"
-            self.workspace.status.setEditable(editor.isEditableDocument)
+            self.workspace.status.message.stringValue = "Ln \(position.line + 1), Col \(position.character + 1)"
+            self.updateEditingMode()
         }
         editor.right.text.onInspect = { [weak self, weak editor] index, kind in
             guard let self, let editor else { return }
@@ -345,10 +350,18 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         language.open(url: reader.root.appendingPathComponent(path), text: source, root: reader.root)
     }
 
-    private func refreshEditingStatus() {
+    private func updateEditingMode() {
         workspace.status.setEditable(workspace.editor.isEditableDocument)
+        workspace.status.setModeEnabled(workspace.editor.canChangeSourceEditing && !session.isSwitching && !decidingSourceEdits && view.window?.attachedSheet == nil)
+        workspace.status.modeButton.toolTip = workspace.editor.canChangeSourceEditing
+            ? (allowsFileEditing ? "Click to make all ordinary files read-only" : "Click to allow editing of all ordinary files")
+            : workspace.editor.isEditingDraft ? "Drafts are always editable" : "This document is read-only"
+    }
+
+    private func refreshEditingStatus() {
+        updateEditingMode()
         guard workspace.editor.activeDocument != nil else { return }
-        workspace.status.message.stringValue = workspace.editor.isEditableDocument ? "Editable text · ⌘S to save" : "Read Only"
+        workspace.status.message.stringValue = workspace.editor.isEditableDocument ? "⌘S to save" : ""
     }
 
     private func refreshLanguageStatus() {
@@ -358,6 +371,18 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     }
 
     @objc func newTextTab() { workspace.editor.newTextTab() }
+    @objc func toggleFileEditing() { setFileEditingAllowed(!allowsFileEditing) }
+    @objc private func toggleFileEditingFromStatus() {
+        guard workspace.editor.canChangeSourceEditing else { return }
+        toggleFileEditing()
+    }
+
+    func setFileEditingAllowed(_ allowed: Bool) {
+        guard !session.isSwitching, !decidingSourceEdits, view.window?.attachedSheet == nil else { return }
+        allowsFileEditing = allowed
+        workspace.editorGroups.editors.forEach { $0.sourceEditingAllowed = allowed }
+        refreshEditingStatus()
+    }
     @objc func saveText() { workspace.editor.saveTextAs() }
     @objc func saveTextAs() { workspace.editor.saveTextAs(alwaysChoose: true) }
 
@@ -624,9 +649,13 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
     @objc func goBack() { workspace.editor.goBack() }
     @objc func goForward() { workspace.editor.goForward() }
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(toggleFileEditing) {
+            (item as? NSMenuItem)?.state = allowsFileEditing ? .on : .off
+            return !session.isSwitching && !decidingSourceEdits && view.window?.attachedSheet == nil
+        }
         if item.action == #selector(saveTextAs), let menu = item as? NSMenuItem { menu.title = workspace.editor.isEditingDraft ? "Save Text As…" : "Save Copy As…" }
         if item.action == #selector(newTextTab) { return session.state != nil && !session.isSwitching }
-        if item.action == #selector(saveText) || item.action == #selector(saveTextAs) { return workspace.editor.isEditableDocument && !session.isSwitching && !decidingSourceEdits }
+        if item.action == #selector(saveText) || item.action == #selector(saveTextAs) { return workspace.editor.canSaveDocument && !session.isSwitching && !decidingSourceEdits }
         if item.action == #selector(showQuickOpen) || item.action == #selector(showProjectSearch) { return session.state != nil && !session.isSwitching }
         if item.action == #selector(findInEditor) || item.action == #selector(findNext) || item.action == #selector(findPrevious) {
             return workspace.editor.canFind && !session.isSwitching
@@ -854,11 +883,13 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         guard let window = view.window, window.attachedSheet == nil else { completion(false); return }
         decidingSourceEdits = true
         workspace.editorGroups.editors.forEach { $0.editingSuspended = true }
+        updateEditingMode()
         var discarded: [String] = []
         func finish(_ allowed: Bool) {
             sourceDecisionSheet = nil
             decidingSourceEdits = false
             workspace.editorGroups.editors.forEach { $0.editingSuspended = false }
+            updateEditingMode()
             completion(allowed)
         }
         func confirm(_ index: Int) {

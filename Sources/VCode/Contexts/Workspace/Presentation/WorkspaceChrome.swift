@@ -109,24 +109,103 @@ final class WorkspaceNavigation: NSView {
 }
 
 final class WorkspaceStatus: NSView {
-    private let modeIcon = NSImageView()
+    let modeButton = StatusModeButton(title: "Read Only", target: nil, action: nil)
     let message = Theme.label("Open a folder to begin", size: 11, color: Theme.muted)
     let language = Theme.label("", size: 11, color: Theme.muted)
+    let modeBackground = NSView()
+    private var pointerAreas: [NSTrackingArea] = []
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        let icon = modeIcon
+        modeBackground.wantsLayer = true
+        modeBackground.layer?.cornerRadius = 4
+        Theme.setLayerColor(Theme.hover, on: modeBackground.layer)
+        modeBackground.isHidden = true
+        modeBackground.setAccessibilityElement(false)
+        modeButton.isBordered = false
+        modeButton.alignment = .center
+        modeButton.bezelStyle = .inline
+        modeButton.controlSize = .small
+        modeButton.font = .systemFont(ofSize: 11)
+        modeButton.imagePosition = .imageLeading
+        modeButton.imageHugsTitle = true
+        modeButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
+        modeButton.isEnabled = false
+        (modeButton.cell as? NSButtonCell)?.imageDimsWhenDisabled = false
+        modeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        message.lineBreakMode = .byTruncatingTail
         setEditable(false)
-        icon.contentTintColor = Theme.muted
-        add(icon, message, language)
+        add(modeBackground, modeButton, message, language)
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.Layout.inset), icon.widthAnchor.constraint(equalToConstant: 10), icon.heightAnchor.constraint(equalToConstant: 10), icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            message.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: Theme.Layout.controlGap), message.centerYAnchor.constraint(equalTo: centerYAnchor),
+            modeBackground.leadingAnchor.constraint(equalTo: modeButton.leadingAnchor), modeBackground.trailingAnchor.constraint(equalTo: modeButton.trailingAnchor), modeBackground.topAnchor.constraint(equalTo: modeButton.topAnchor), modeBackground.bottomAnchor.constraint(equalTo: modeButton.bottomAnchor),
+            modeButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.Layout.inset), modeButton.heightAnchor.constraint(equalToConstant: 24), modeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            message.leadingAnchor.constraint(equalTo: modeButton.trailingAnchor, constant: Theme.Layout.controlGap), message.centerYAnchor.constraint(equalTo: centerYAnchor),
             language.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.Layout.inset), language.centerYAnchor.constraint(equalTo: centerYAnchor), language.leadingAnchor.constraint(greaterThanOrEqualTo: message.trailingAnchor, constant: Theme.Layout.inset)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.acceptsMouseMovedEvents = true
+    }
+    override func layout() {
+        super.layout()
+        refreshModePointer()
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in pointerAreas { removeTrackingArea(area) }
+        pointerAreas = [
+            NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self),
+            NSTrackingArea(rect: .zero, options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect], owner: self)
+        ]
+        for area in pointerAreas { addTrackingArea(area) }
+    }
+    private var modePointerRect: NSRect {
+        guard modeButton.isEnabled, !modeButton.isHiddenOrHasHiddenAncestor else { return .zero }
+        return convert(modeButton.bounds.intersection(modeButton.visibleRect), from: modeButton).intersection(bounds.intersection(visibleRect))
+    }
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        let rect = modePointerRect
+        if !rect.isEmpty { addCursorRect(rect, cursor: .pointingHand) }
+    }
+    override func mouseEntered(with event: NSEvent) { updateCursor(at: event.locationInWindow) }
+    override func mouseMoved(with event: NSEvent) { updateCursor(at: event.locationInWindow) }
+    override func mouseExited(with event: NSEvent) { modeBackground.isHidden = true }
+    override func cursorUpdate(with event: NSEvent) { updateCursor(at: event.locationInWindow) }
+    private func updateCursor(at windowPoint: NSPoint) {
+        let point = convert(windowPoint, from: nil)
+        guard !isHiddenOrHasHiddenAncestor, bounds.intersection(visibleRect).contains(point) else { modeBackground.isHidden = true; return }
+        let interactive = modePointerRect.contains(point)
+        modeBackground.isHidden = !interactive
+        (interactive ? NSCursor.pointingHand : NSCursor.arrow).set()
+    }
+    private func refreshModePointer() {
+        window?.invalidateCursorRects(for: self)
+        // Layout in a background window must not replace another window's cursor.
+        if containsVisibleWindowMouse, let window { updateCursor(at: window.mouseLocationOutsideOfEventStream) }
+        else { modeBackground.isHidden = true }
+    }
+    func setModeEnabled(_ enabled: Bool) {
+        modeButton.isEnabled = enabled
+        refreshModePointer()
+    }
     func setEditable(_ editable: Bool) {
-        modeIcon.image = NSImage(systemSymbolName: editable ? "pencil" : "lock", accessibilityDescription: editable ? "Editable" : "Read only")
+        modeButton.title = editable ? "Editable" : "Read Only"
+        modeButton.attributedTitle = NSAttributedString(string: modeButton.title, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: Theme.muted])
+        modeButton.image = NSImage(systemSymbolName: editable ? "pencil" : "lock", accessibilityDescription: nil)
+        modeButton.contentTintColor = Theme.muted
+        needsLayout = true
+        window?.invalidateCursorRects(for: self)
+    }
+}
+
+final class StatusModeButton: PointingHandButton {
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsets() }
+    override var intrinsicContentSize: NSSize {
+        let size = super.intrinsicContentSize
+        return NSSize(width: size.width + 16, height: size.height)
     }
 }

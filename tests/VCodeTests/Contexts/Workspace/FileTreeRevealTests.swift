@@ -40,6 +40,7 @@ final class FileTreeRevealTests: XCTestCase {
             XCTAssertTrue(item.isEnabled)
             XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
         }
+        controller.setFileEditingAllowed(true)
         controller.open(root)
         waitUntil { view.header.worktreeButton.title == "project" }
         controller.openFile("other.ts", diff: false)
