@@ -54,7 +54,8 @@ final class DiffOverviewTests: XCTestCase {
         map.update(documentHeight: 1_000_000, visibleHeight: 400, scrollY: 999_600)
         XCTAssertEqual(map.viewportRect.maxY, 498, accuracy: 0.01)
         map.update(documentHeight: 100, visibleHeight: 400, scrollY: 90)
-        XCTAssertEqual(map.viewportRect.height, 496)
+        XCTAssertEqual(map.viewportRect.height, 248)
+        XCTAssertEqual(map.viewportRect.minY, 2)
         XCTAssertEqual(map.scrollY, 0)
         map.update(documentHeight: 0, visibleHeight: 400, scrollY: 0)
         XCTAssertTrue(map.viewportRect.height.isFinite)
@@ -105,9 +106,13 @@ final class DiffOverviewTests: XCTestCase {
                 let pane = editor.right
                 XCTAssertFalse(pane.diffOverview.isHidden)
                 XCTAssertFalse(pane.scroll.hasVerticalScroller)
-                XCTAssertEqual(pane.bounds.width - pane.scroll.frame.width, 60, accuracy: 0.5)
+                XCTAssertEqual(pane.diffOverview.frame.width, 45, accuracy: 0.5)
+                XCTAssertEqual(pane.diffOverview.frame.minX - pane.scroll.frame.maxX, 6, accuracy: 0.5)
+                XCTAssertEqual(pane.bounds.maxX - pane.diffOverview.frame.maxX, 6, accuracy: 0.5)
+                XCTAssertEqual(pane.diffOverview.frame.minY - pane.scroll.frame.minY, 6, accuracy: 0.5)
+                XCTAssertEqual(pane.scroll.frame.maxY - pane.diffOverview.frame.maxY, 6, accuracy: 0.5)
                 if !diff { XCTAssertTrue(pane.diffOverview.marks.isEmpty) }
-                XCTAssertEqual(pane.diffOverview.bounds.height, pane.scroll.bounds.height, accuracy: 0.5)
+                XCTAssertEqual(pane.diffOverview.bounds.height, pane.scroll.bounds.height - 12, accuracy: 0.5)
                 for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                     pane.appearance = NSAppearance(named: appearance)
                     if let bitmap = pane.bitmapImageRepForCachingDisplay(in: pane.bounds) { pane.cacheDisplay(in: pane.bounds, to: bitmap) }
@@ -120,7 +125,7 @@ final class DiffOverviewTests: XCTestCase {
         editor.layoutSubtreeIfNeeded()
         XCTAssertEqual(editor.right.diffOverview.marks, [DiffOverviewMark(rows: 0..<3, removed: true)])
         XCTAssertEqual(editor.right.diffOverview.documentHeight, max(1, editor.right.text.bounds.height), accuracy: 0.5)
-        XCTAssertEqual(editor.right.diffOverview.viewportRect.height, editor.right.diffOverview.bounds.height - 4, accuracy: 0.5)
+        XCTAssertEqual(editor.right.diffOverview.viewportRect.height, (editor.right.diffOverview.bounds.height - 4) / 2, accuracy: 0.5)
         editor.reset()
         XCTAssertTrue(editor.right.diffOverview.isHidden)
         XCTAssertTrue(editor.right.diffOverview.marks.isEmpty)

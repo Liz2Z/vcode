@@ -72,7 +72,7 @@ final class EditorFindTests: XCTestCase {
         editor.layoutSubtreeIfNeeded()
         XCTAssertTrue(editor.find.currentPane === editor.left)
         XCTAssertEqual(editor.findBar.frame.width, 420, accuracy: 1)
-        XCTAssertEqual(editor.findBar.frame.maxX, editor.bounds.maxX - DiffOverview.preferredWidth - 8, accuracy: 1)
+        XCTAssertEqual(editor.findBar.frame.maxX, editor.bounds.maxX - DiffOverview.preferredWidth - 2 * DiffOverview.outerInset - 8, accuracy: 1)
         XCTAssertGreaterThan(editor.findBar.frame.height, 20)
         let code = editor.convert(editor.right.scroll.bounds, from: editor.right.scroll)
         XCTAssertLessThanOrEqual(editor.findBar.frame.maxY, code.maxY - 8, "The floating query starts below Original/Modified headers")

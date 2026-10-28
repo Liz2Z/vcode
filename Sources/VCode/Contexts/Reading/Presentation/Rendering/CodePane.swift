@@ -6,6 +6,7 @@ final class CodePane: NSView {
     let gutter: CodeGutter
     let diffOverview = DiffOverview()
     private var overviewWidth: NSLayoutConstraint!
+    private var overviewSpacing: [NSLayoutConstraint] = []
     private let codeLayout: CodeLayoutManager
     private let caption = Theme.label("", size: 11, color: Theme.muted)
     private let badge = Theme.label("", size: 11, color: Theme.muted)
@@ -86,6 +87,12 @@ final class CodePane: NSView {
         add(header, scroll, diffOverview)
         diffOverview.isHidden = true
         overviewWidth = diffOverview.widthAnchor.constraint(equalToConstant: 0)
+        overviewSpacing = [
+            diffOverview.leadingAnchor.constraint(equalTo: scroll.trailingAnchor),
+            diffOverview.trailingAnchor.constraint(equalTo: trailingAnchor),
+            diffOverview.topAnchor.constraint(equalTo: scroll.topAnchor),
+            diffOverview.bottomAnchor.constraint(equalTo: scroll.bottomAnchor)
+        ]
         diffOverview.onNavigate = { [weak self] y in
             guard let self else { return }
             self.scrollTo(NSPoint(x: self.scroll.contentView.bounds.minX, y: y))
@@ -101,11 +108,10 @@ final class CodePane: NSView {
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: topAnchor), header.leadingAnchor.constraint(equalTo: leadingAnchor), header.trailingAnchor.constraint(equalTo: trailingAnchor), headerHeight,
             caption.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: Theme.Layout.inset), caption.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            badge.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -Theme.Layout.inset), badge.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            badge.trailingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: -Theme.Layout.inset), badge.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             caption.trailingAnchor.constraint(lessThanOrEqualTo: badge.leadingAnchor, constant: -8),
-            scroll.topAnchor.constraint(equalTo: header.bottomAnchor), scroll.leadingAnchor.constraint(equalTo: leadingAnchor), scroll.trailingAnchor.constraint(equalTo: diffOverview.leadingAnchor), scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
-            diffOverview.topAnchor.constraint(equalTo: scroll.topAnchor), diffOverview.bottomAnchor.constraint(equalTo: scroll.bottomAnchor), diffOverview.trailingAnchor.constraint(equalTo: trailingAnchor), overviewWidth
-        ])
+            scroll.topAnchor.constraint(equalTo: header.bottomAnchor), scroll.leadingAnchor.constraint(equalTo: leadingAnchor), scroll.bottomAnchor.constraint(equalTo: bottomAnchor), overviewWidth
+        ] + overviewSpacing)
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit {
@@ -116,6 +122,8 @@ final class CodePane: NSView {
     func showDiffOverview(_ rows: [DiffRow]?, source: Bool = false) {
         diffOverview.isHidden = rows == nil && !source
         overviewWidth.constant = diffOverview.isHidden ? 0 : DiffOverview.preferredWidth
+        let inset = diffOverview.isHidden ? 0 : DiffOverview.outerInset
+        for (constraint, constant) in zip(overviewSpacing, [inset, -inset, inset, -inset]) { constraint.constant = constant }
         scroll.hasVerticalScroller = diffOverview.isHidden
         Theme.compactScrollers(scroll)
         diffOverview.show(rows: rows ?? [], isDiff: rows != nil)

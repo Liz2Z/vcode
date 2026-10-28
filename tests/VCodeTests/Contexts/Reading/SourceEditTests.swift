@@ -261,7 +261,7 @@ final class SourceEditTests: XCTestCase {
         first.show(FileSnapshot(path: "main.ts", before: "", after: "const target = 1;\n", rows: [], message: nil, isBinary: false, editable: true), diff: false, preserveScroll: true)
         XCTAssertEqual(first.right.text.string, source)
         XCTAssertEqual(first.currentSource, source)
-        XCTAssertEqual(first.right.diffOverview.frame.width, 60, accuracy: 1)
+        XCTAssertEqual(first.right.diffOverview.frame.width, 45, accuracy: 1)
         first.saveTextAs()
         XCTAssertTrue(store.dirtyPaths.isEmpty)
         XCTAssertFalse(second.documentTitle(try XCTUnwrap(second.activeDocument)).contains("•"))

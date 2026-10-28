@@ -24,7 +24,8 @@ struct DiffOverviewMark: Equatable {
 
 /// A narrow change overview and draggable viewport, rather than a second code renderer.
 final class DiffOverview: NSView {
-    static let preferredWidth: CGFloat = 60
+    static let preferredWidth: CGFloat = 45
+    static let outerInset: CGFloat = 6
     private(set) var marks: [DiffOverviewMark] = []
     private(set) var occurrenceRows: [Int] = []
     private(set) var searchRows: [Int] = []
@@ -43,6 +44,7 @@ final class DiffOverview: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         clipsToBounds = true
+        Theme.rounded(self, radius: max(0, Theme.Layout.panelRadius - Self.outerInset))
         setAccessibilityElement(true)
         setAccessibilityRole(.slider)
         setAccessibilityLabel("Diff overview")
@@ -83,7 +85,7 @@ final class DiffOverview: NSView {
     private var maximumScroll: CGFloat { max(0, documentHeight - visibleHeight) }
     private var track: NSRect { bounds.insetBy(dx: 1, dy: 2) }
     var viewportRect: NSRect {
-        let height = min(track.height, max(80, track.height * min(1, visibleHeight / documentHeight)))
+        let height = maximumScroll == 0 ? track.height / 2 : min(track.height, max(80, track.height * min(1, visibleHeight / documentHeight)))
         let y = maximumScroll > 0 ? scrollY / maximumScroll * (track.height - height) : 0
         return NSRect(x: track.minX, y: track.minY + y, width: track.width, height: height)
     }
@@ -96,8 +98,10 @@ final class DiffOverview: NSView {
         defer { NSGraphicsContext.restoreGraphicsState() }
         bounds.clip()
         Theme.background.setFill(); bounds.intersection(dirtyRect).fill()
-        Theme.text.withAlphaComponent(dragOffset != nil ? 0.52 : hovered ? 0.42 : 0.32).setFill()
-        NSBezierPath(roundedRect: viewportRect, xRadius: 2, yRadius: 2).fill()
+        Theme.surface.withAlphaComponent(0.28).setFill()
+        bounds.intersection(dirtyRect).fill()
+        Theme.text.withAlphaComponent(dragOffset != nil ? 0.40 : hovered ? 0.32 : 0.24).setFill()
+        NSBezierPath(roundedRect: viewportRect, xRadius: Theme.Layout.controlRadius, yRadius: Theme.Layout.controlRadius).fill()
         // Marker thickness is independent of the wider navigation hit target.
         let laneWidth: CGFloat = 4
         let diffLeft = track.maxX - laneWidth * 2 - 1
