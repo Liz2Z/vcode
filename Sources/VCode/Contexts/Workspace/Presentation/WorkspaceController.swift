@@ -112,10 +112,6 @@ final class WorkspaceController: NSViewController, NSUserInterfaceValidations {
         }
         workspace.explorer.onIndexAction = { [weak self] action, target in self?.updateIndex(action, target: target) }
         workspace.explorer.onSelect = { [weak self] path, comparison in self?.openFile(path, diff: comparison != nil, comparison: comparison ?? .workingTree) }
-        workspace.explorer.onReveal = { [weak self] path in
-            guard let url = try? self?.session.reader?.files.safeURL(path) else { return }
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-        }
         workspace.explorer.canRevealInFiles = { [weak self] path in self?.session.reader?.files.exists(path) == true }
         workspace.explorer.onRevealInFiles = { [weak self] path in
             guard let self, !self.session.isSwitching, self.session.reader?.files.exists(path) == true else { return }

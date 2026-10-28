@@ -15,9 +15,7 @@ final class FileTreeTests: XCTestCase {
         defer { pasteboard.releaseGlobally() }
         let path = "src/中文 file.ts"
         var opened: [String] = []
-        var revealed: [String] = []
         tree.onSelect = { path, _ in opened.append(path) }
-        tree.onReveal = { revealed.append($0) }
 
         func menu(at row: Int) throws -> NSMenu? {
             let y = row < tree.outline.numberOfRows ? tree.outline.rect(ofRow: row).midY : tree.outline.rect(ofRow: tree.outline.numberOfRows - 1).maxY + 30
@@ -40,16 +38,17 @@ final class FileTreeTests: XCTestCase {
                 let expanded = tree.outline.isItemExpanded(node)
                 let contextMenu = try XCTUnwrap(menu(at: row))
                 XCTAssertEqual(contextMenu.items.map(\.title), changesOnly
-                    ? ["Copy Relative Path", "Copy Absolute Path", "Reveal in Files", "Reveal in Finder"]
-                    : ["Copy Relative Path", "Copy Absolute Path", "Reveal in Finder"])
+                    ? ["Copy Relative Path", "Copy Absolute Path", "", "Reveal in Files"]
+                    : ["Copy Relative Path", "Copy Absolute Path"])
+                XCTAssertEqual(contextMenu.items.filter(\.isSeparatorItem).count, changesOnly ? 1 : 0)
+                if changesOnly { XCTAssertTrue(contextMenu.items[2].isSeparatorItem) }
+                XCTAssertFalse(contextMenu.items.first!.isSeparatorItem)
+                XCTAssertFalse(contextMenu.items.last!.isSeparatorItem)
                 for (index, expected) in [(0, target), (1, root.appendingPathComponent(target).path)] {
                     let item = contextMenu.items[index]
                     XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
                     XCTAssertEqual(pasteboard.string(forType: .string), expected)
                 }
-                let reveal = try XCTUnwrap(contextMenu.items.last)
-                XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(reveal.action), to: reveal.target, from: reveal))
-                XCTAssertEqual(revealed.last, target)
                 XCTAssertEqual(tree.outline.selectedRow, selected)
                 XCTAssertEqual(tree.outline.isItemExpanded(node), expanded)
                 XCTAssertTrue(opened.isEmpty)

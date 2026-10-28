@@ -128,7 +128,6 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     var onIndexAction: ((GitIndexAction, GitChangeTarget) -> Void)?
     private(set) var isIndexBusy = false
     var onSelect: ((String, GitComparison?) -> Void)?
-    var onReveal: ((String) -> Void)?
     var onRevealInFiles: ((String) -> Void)?
     var canRevealInFiles: ((String) -> Bool)?
     var pathPasteboard: NSPasteboard = .general
@@ -466,21 +465,21 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         guard let state, !node.isSection, !node.path.isEmpty else { return nil }
         let menu = NSMenu()
         menu.autoenablesItems = false
-        for (title, path, action) in [
-            ("Copy Relative Path", node.path, #selector(copyPath(_:))),
-            ("Copy Absolute Path", state.root.appendingPathComponent(node.path).path, #selector(copyPath(_:))),
-            ("Reveal in Finder", node.path, #selector(revealFile(_:)))
+        for (title, path) in [
+            ("Copy Relative Path", node.path),
+            ("Copy Absolute Path", state.root.appendingPathComponent(node.path).path)
         ] {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            let item = NSMenuItem(title: title, action: #selector(copyPath(_:)), keyEquivalent: "")
             item.target = self; item.representedObject = path
             menu.addItem(item)
         }
         if changesOnly {
+            menu.addItem(.separator())
             let reveal = NSMenuItem(title: "Reveal in Files", action: #selector(viewInFiles(_:)), keyEquivalent: "")
             reveal.target = self
             reveal.representedObject = FilesRevealTarget(root: state.root, path: node.path)
             reveal.isEnabled = onRevealInFiles != nil && isAvailableInFiles(node.path)
-            menu.insertItem(reveal, at: 2)
+            menu.addItem(reveal)
         }
         return menu
     }
@@ -509,8 +508,4 @@ final class FileTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         pathPasteboard.setString(path, forType: .string)
     }
 
-    @objc private func revealFile(_ item: NSMenuItem) {
-        guard let path = item.representedObject as? String else { return }
-        onReveal?(path)
-    }
 }
