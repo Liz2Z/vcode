@@ -1,6 +1,8 @@
 import AppKit
 
 final class FeedbackButton: PointingHandButton {
+    enum Style { case toolbar, dialog }
+    var style: Style = .toolbar { didSet { updateFeedback() } }
     var isSelected = false { didSet { updateFeedback() } }
     var normalTint = Theme.muted { didSet { updateFeedback() } }
     var disabledTint: NSColor? { didSet { updateFeedback() } }
@@ -146,6 +148,7 @@ final class FeedbackButton: PointingHandButton {
         layer?.cornerRadius = feedbackRadius
         let fill: NSColor
         if !isEnabled { fill = .clear }
+        else if style == .dialog { fill = Theme.text.withAlphaComponent(pressed ? 0.22 : hovered ? 0.16 : 0.10) }
         else if pressed { fill = Theme.accent.withAlphaComponent(0.24) }
         else if hovered { fill = (isSelected ? Theme.selectedHover : Theme.hover) }
         else if isSelected { fill = Theme.accent.withAlphaComponent(0.18) }
@@ -153,7 +156,9 @@ final class FeedbackButton: PointingHandButton {
         Theme.setLayerColor(fill, on: layer)
         layer?.borderWidth = focused && isEnabled ? 1 : 0
         Theme.setLayerColor(Theme.accent, on: layer, property: .border)
-        contentTintColor = !isEnabled ? (disabledTint ?? Theme.muted.withAlphaComponent(0.7)) : (pressed || isSelected ? Theme.accent : hovered ? Theme.text : normalTint)
+        if !isEnabled { contentTintColor = disabledTint ?? Theme.muted.withAlphaComponent(0.7) }
+        else if style == .dialog { contentTintColor = normalTint }
+        else { contentTintColor = pressed || isSelected ? Theme.accent : hovered ? Theme.text : normalTint }
         icon.contentTintColor = contentTintColor
         label.textColor = contentTintColor
         needsDisplay = true

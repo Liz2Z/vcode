@@ -19,10 +19,15 @@ final class DraftCloseSheet: NSWindow {
         heading.lineBreakMode = .byTruncatingMiddle
         let detail = Theme.label(message, size: 12, color: Theme.muted)
         detail.maximumNumberOfLines = 2
-        let cancel = Theme.actionButton("Cancel", target: self, action: #selector(cancelClose))
-        let discard = Theme.actionButton("Don’t Save", target: self, action: #selector(discardClose))
-        let save = Theme.actionButton("Save…", target: self, action: #selector(saveClose))
+        // Keep all three backgrounds neutral, including the default action;
+        // the destructive action alone uses red text.
+        let cancel = decisionButton("Cancel", action: #selector(cancelClose))
+        let discard = decisionButton("Don’t Save", action: #selector(discardClose))
+        discard.hasDestructiveAction = true
+        discard.normalTint = .systemRed
+        let save = decisionButton("Save…", action: #selector(saveClose))
         save.keyEquivalent = "\r"
+        defaultButtonCell = save.cell as? NSButtonCell
         cancel.keyEquivalent = "\u{1b}"
         let buttons = NSStackView(views: [discard, cancel, save])
         buttons.spacing = 8
@@ -36,6 +41,15 @@ final class DraftCloseSheet: NSWindow {
             buttons.heightAnchor.constraint(equalToConstant: 30)
         ])
     }
+
+    private func decisionButton(_ title: String, action: Selector) -> FeedbackButton {
+        let button = Theme.actionButton(title, target: self, action: action)
+        button.style = .dialog
+        button.font = .systemFont(ofSize: 13)
+        button.horizontalPadding = 12
+        return button
+    }
+
     private func choose(_ value: Choice) {
         let callback = completion
         completion = nil
