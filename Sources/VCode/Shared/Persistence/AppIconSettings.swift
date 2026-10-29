@@ -2,6 +2,8 @@ import Foundation
 
 enum AppIconStyle: String, Codable, CaseIterable {
     case origami, lightsaber, gummy, spectrum
+    case clockColorful = "clock-colorful"
+    case clockBauhaus = "clock-bauhaus"
 
     var title: String {
         switch self {
@@ -9,6 +11,8 @@ enum AppIconStyle: String, Codable, CaseIterable {
         case .lightsaber: return "Lightsaber"
         case .gummy: return "Gummy"
         case .spectrum: return "Spectrum"
+        case .clockColorful: return "Clock Colorful"
+        case .clockBauhaus: return "Clock Bauhaus"
         }
     }
 }

@@ -21,7 +21,9 @@ final class AppIconTests: XCTestCase {
             .origami: "Resources/Brand/AppIcon.icns",
             .lightsaber: "Resources/Brand/Lightsaber/AppIcon-preview-padded.icns",
             .gummy: "Resources/Brand/Gummy/AppIcon.icns",
-            .spectrum: "Resources/Brand/Spectrum/AppIcon.icns"
+            .spectrum: "Resources/Brand/Spectrum/AppIcon.icns",
+            .clockColorful: "Resources/Brand/ClockColorful/AppIcon.icns",
+            .clockBauhaus: "Resources/Brand/ClockBauhaus/AppIcon.icns"
         ]
         for (style, path) in files {
             try FileManager.default.copyItem(at: repo.appendingPathComponent(path), to: library.appendingPathComponent(style.rawValue + ".icns"))
@@ -29,7 +31,7 @@ final class AppIconTests: XCTestCase {
         return root
     }
 
-    func testFourMenuChoicesApplyTheirRealArtworkAndPersistAcrossLaunches() throws {
+    func testMenuChoicesApplyTheirRealArtworkAndPersistAcrossLaunches() throws {
         let resources = try resources(), config = try directory()
         var images: [NSImage] = []
         let settings = AppIconSettings(directory: config)
@@ -41,7 +43,7 @@ final class AppIconTests: XCTestCase {
         controller.addMenu(to: menu)
         let options = try XCTUnwrap(menu.items.first?.submenu)
         let choices = options.items.filter { $0.representedObject is String }
-        XCTAssertEqual(choices.map(\.title), ["Origami", "Lightsaber", "Gummy", "Spectrum"])
+        XCTAssertEqual(choices.map(\.title), ["Origami", "Lightsaber", "Gummy", "Spectrum", "Clock Colorful", "Clock Bauhaus"])
         XCTAssertTrue(choices.allSatisfy { $0.image != nil && $0.isEnabled })
         var data = Set<Data>()
         for (index, style) in AppIconStyle.allCases.enumerated() {
@@ -57,8 +59,8 @@ final class AppIconTests: XCTestCase {
             relaunched.start()
             XCTAssertEqual(relaunched.currentStyle, style, "A saved choice overrides either build flavor")
         }
-        XCTAssertEqual(data.count, 4, "Every choice must have its own actual artwork")
-        XCTAssertEqual(images.count, 5)
+        XCTAssertEqual(data.count, choices.count, "Every choice must have its own actual artwork")
+        XCTAssertEqual(images.count, choices.count + 1)
         XCTAssertEqual(settings.file, config.appendingPathComponent("app-icon.json"))
     }
 

@@ -28,7 +28,9 @@ if CommandLine.arguments.count == 3 {
         "origami": "Resources/Brand/AppIcon.icns",
         "lightsaber": "Resources/Brand/Lightsaber/AppIcon-preview-padded.icns",
         "gummy": "Resources/Brand/Gummy/AppIcon.icns",
-        "spectrum": "Resources/Brand/Spectrum/AppIcon.icns"
+        "spectrum": "Resources/Brand/Spectrum/AppIcon.icns",
+        "clock-colorful": "Resources/Brand/ClockColorful/AppIcon.icns",
+        "clock-bauhaus": "Resources/Brand/ClockBauhaus/AppIcon.icns"
     ]
     for (name, path) in library {
         let source = root.appendingPathComponent(path)
