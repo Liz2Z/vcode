@@ -12,27 +12,38 @@ final class AppIconTests: XCTestCase {
         return root
     }
 
-    private func resources() throws -> URL {
+    private func resources(flavor: String = "preview") throws -> URL {
         let root = try directory()
         let library = root.appendingPathComponent("AppIcons")
-        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let files: [AppIconStyle: String] = [
-            .origami: "Resources/Brand/AppIcon.icns",
-            .lightsaber: "Resources/Brand/Lightsaber/AppIcon-preview-padded.icns",
-            .gummy: "Resources/Brand/Gummy/AppIcon.icns",
-            .spectrum: "Resources/Brand/Spectrum/AppIcon.icns",
-            .clockColorful: "Resources/Brand/ClockColorful/AppIcon.icns",
-            .clockBauhaus: "Resources/Brand/ClockBauhaus/AppIcon.icns"
-        ]
-        for (style, path) in files {
-            try FileManager.default.copyItem(at: repo.appendingPathComponent(path), to: library.appendingPathComponent(style.rawValue + ".icns"))
+        let process = Process(), diagnostics = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
+        process.arguments = ["scripts/MakeIcon.swift", root.appendingPathComponent("AppIcon.icns").path, library.path]
+        process.currentDirectoryURL = repo
+        process.environment = ProcessInfo.processInfo.environment.merging(["VCODE_BUILD_FLAVOR": flavor]) { _, new in new }
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = diagnostics
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let message = String(decoding: diagnostics.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            XCTFail(message)
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let defaultStyle: AppIconStyle = flavor == "preview" ? .lightsaber : .origami
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: library.path)),
+                       Set(AppIconStyle.allCases.filter { $0 != defaultStyle }.map { $0.rawValue + ".png" }))
+        for style in AppIconStyle.allCases where style != defaultStyle {
+            let image = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: library.appendingPathComponent(style.rawValue + ".png"))))
+            XCTAssertEqual(image.pixelsWide, 1024)
+            XCTAssertEqual(image.pixelsHigh, 1024)
         }
         return root
     }
 
     func testMenuChoicesApplyTheirRealArtworkAndPersistAcrossLaunches() throws {
         let resources = try resources(), config = try directory()
+        let releaseResources = try self.resources(flavor: "release")
         var images: [NSImage] = []
         let settings = AppIconSettings(directory: config)
         let controller = AppIconController(settings: settings, resourceDirectory: resources, defaultStyle: .lightsaber) { images.append($0) }
@@ -55,7 +66,7 @@ final class AppIconTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(image.representations.map(\.pixelsWide).max() ?? 0, 1024)
             XCTAssertEqual(choices[index].image?.size, NSSize(width: 24, height: 24), "Menu thumbnail sizing must not resize the application icon")
             data.insert(try XCTUnwrap(image.tiffRepresentation))
-            let relaunched = AppIconController(settings: AppIconSettings(directory: config), resourceDirectory: resources, defaultStyle: .origami) { _ in }
+            let relaunched = AppIconController(settings: AppIconSettings(directory: config), resourceDirectory: releaseResources, defaultStyle: .origami) { _ in }
             relaunched.start()
             XCTAssertEqual(relaunched.currentStyle, style, "A saved choice overrides either build flavor")
         }
@@ -78,20 +89,20 @@ final class AppIconTests: XCTestCase {
         XCTAssertEqual(controller.currentStyle, .lightsaber)
         XCTAssertNil(controller.settings.selection)
         XCTAssertFalse(reset.isEnabled)
-        let release = AppIconController(settings: AppIconSettings(directory: config), resourceDirectory: resources, defaultStyle: .origami) { _ in }
+        let release = AppIconController(settings: AppIconSettings(directory: config), resourceDirectory: try self.resources(flavor: "release"), defaultStyle: .origami) { _ in }
         release.start()
         XCTAssertEqual(release.currentStyle, .origami)
     }
 
     func testMissingArtworkAndFailedWritesKeepTheWorkingIconAndChoice() throws {
-        let resources = try resources(), config = try directory()
+        let resources = try resources(flavor: "release"), config = try directory()
         let controller = AppIconController(settings: AppIconSettings(directory: config), resourceDirectory: resources, defaultStyle: .origami) { _ in }
         var errors: [String] = []
         controller.onError = { errors.append($0) }
         controller.start()
         controller.select(.gummy)
         let workingImage = controller.currentImage
-        try FileManager.default.removeItem(at: resources.appendingPathComponent("AppIcons/spectrum.icns"))
+        try FileManager.default.removeItem(at: resources.appendingPathComponent("AppIcons/spectrum.png"))
         controller.select(.spectrum)
         XCTAssertEqual(controller.currentStyle, .gummy)
         XCTAssertTrue(controller.currentImage === workingImage)

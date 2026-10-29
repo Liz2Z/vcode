@@ -7,4 +7,4 @@
 
 AppKit 导出使用 1024 × 1024 透明画布，图标位于 `(80, 80, 864, 864)`，轮廓圆角半径为图标宽度的 0.23。原始图片均为 1254 × 1254；源图裁切区域采用 AppKit 左下角坐标：Clock Colorful 为 `(79, 73, 1095, 1099)`，Clock Bauhaus 为 `(55, 58, 1140, 1138)`。高质量插值缩放保留原图颜色、针身与针尾、轴心及七个刻度，圆角轮廓与透明边距仅用于原生图标格式导出。
 
-ICNS 包含 16、32、128、256、512 点各自的标准及 Retina 位图，通过系统 `sips` 和 `iconutil` 从 `AppIcon.png` 导出。菜单资源名分别为 `clock-colorful.icns` 与 `clock-bauhaus.icns`。
+仓库中的 ICNS 包含 16、32、128、256、512 点各自的标准及 Retina 位图，通过系统 `sips` 和 `iconutil` 从 `AppIcon.png` 导出。安装包只提取已有的 1024 像素 PNG，菜单资源名分别为 `clock-colorful.png` 与 `clock-bauhaus.png`，不重复携带完整多尺寸 ICNS。

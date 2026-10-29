@@ -84,7 +84,8 @@ final class AppIconController: NSObject {
     }
 
     private func image(for style: AppIconStyle) -> NSImage? {
-        guard let url = resourceDirectory?.appendingPathComponent("AppIcons/\(style.rawValue).icns"),
+        let path = style == defaultStyle ? "AppIcon.icns" : "AppIcons/\(style.rawValue).png"
+        guard let url = resourceDirectory?.appendingPathComponent(path),
               let image = NSImage(contentsOf: url), image.isValid else { return nil }
         return image
     }

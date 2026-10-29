@@ -23,4 +23,6 @@ View → App Icon 可选择六款图标：
 
 新增素材目录中的 `Source.png` 保留用户选定的原始图像；`AppIcon.png` 为去除底板外背景、增加透明留白的应用图标，`AppIcon.icns` 包含常用及 Retina 尺寸。软糖和光谱目录的 `PreparationPrompt.txt` 保存内置 imagegen 的素材准备提示词，不将写实图伪称为矢量源文件。两款钟表均保留用户明确选中的内圈刻度原稿，不采用后续沿边刻度方案；原始像素通过 AppKit 裁切、缩放及标准圆角轮廓导出，未重新生成或重绘指针、刻度。钟表导出参数见 [ClockIcons.md](ClockIcons.md)。
 
-打包时六款均复制到 `Contents/Resources/AppIcons`。`VCodeDefaultAppIcon` 标识该安装包的缺省图标；应用偏好保存在 XDG CONFIG_HOME/vcode/app-icon.json，Use Build Default 恢复跟随当前构建。运行时使用 AppKit 更新 Dock 图标，打开关于面板时传入当前图标，不改写已签名的应用包；Finder 继续使用安装包的默认图标。
+打包时默认图标仅保留一份完整的 `Contents/Resources/AppIcon.icns`；其余五款从各自 ICNS 的 `ic10` 项直接提取已有 1024 × 1024 PNG，写入 `Contents/Resources/AppIcons/<名称>.png`，不重采样、不重编码、不丢失透明通道。默认图标不在该目录重复保存，源图及备选完整 ICNS 保留在仓库，不进入安装包。按当前素材，preview 的图标资源由约 9.13 MiB 缩减到约 5.19 MiB。
+
+`VCodeDefaultAppIcon` 标识该安装包的缺省图标；应用偏好保存在 XDG CONFIG_HOME/vcode/app-icon.json，Use Build Default 恢复跟随当前构建。运行时使用 AppKit 更新 Dock 图标，打开关于面板时传入当前图标，不改写已签名的应用包；Finder 继续使用安装包的默认图标。
