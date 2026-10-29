@@ -37,7 +37,10 @@ mkdir -p "$app/Contents/Resources/Runtime"
 cp .build/search-runtime/rg "$app/Contents/Resources/Runtime/rg"
 mkdir -p "$app/Contents/Resources/Licenses/ripgrep"
 cp .build/search-runtime/LICENSE-MIT .build/search-runtime/UNLICENSE .build/search-runtime/COPYING "$app/Contents/Resources/Licenses/ripgrep/"
-/usr/bin/swift scripts/MakeIcon.swift "$app/Contents/Resources/AppIcon.icns"
+default_icon=origami
+if [[ "${VCODE_BUILD_FLAVOR:-preview}" == preview ]]; then default_icon=lightsaber; fi
+/usr/libexec/PlistBuddy -c "Set :VCodeDefaultAppIcon $default_icon" "$app/Contents/Info.plist"
+/usr/bin/swift scripts/MakeIcon.swift "$app/Contents/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcons"
 /usr/bin/codesign --force --deep --sign - "$app"
 destination="$(pwd)/dist/VCode.app"
 previous="$(pwd)/.build/Previous-VCode.app"

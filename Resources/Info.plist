@@ -18,6 +18,7 @@
     <key>SUVerifyUpdateBeforeExtraction</key><true/>
     <key>SURequireSignedFeed</key><true/>
     <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>VCodeDefaultAppIcon</key><string>origami</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>

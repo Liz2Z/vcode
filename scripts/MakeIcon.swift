@@ -1,7 +1,7 @@
 import AppKit
 
-guard CommandLine.arguments.count == 2 else {
-    fputs("Usage: swift scripts/MakeIcon.swift <output.icns>\n", stderr)
+guard [2, 3].contains(CommandLine.arguments.count) else {
+    fputs("Usage: swift scripts/MakeIcon.swift <output.icns> [icon-library-directory]\n", stderr)
     exit(2)
 }
 
@@ -20,3 +20,22 @@ guard data.starts(with: Data("icns".utf8)), NSImage(data: data) != nil else {
     throw CocoaError(.fileReadCorruptFile, userInfo: [NSFilePathErrorKey: source.path])
 }
 try data.write(to: URL(fileURLWithPath: CommandLine.arguments[1]), options: .atomic)
+
+if CommandLine.arguments.count == 3 {
+    let directory = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let library = [
+        "origami": "Resources/Brand/AppIcon.icns",
+        "lightsaber": "Resources/Brand/Lightsaber/AppIcon-preview-padded.icns",
+        "gummy": "Resources/Brand/Gummy/AppIcon.icns",
+        "spectrum": "Resources/Brand/Spectrum/AppIcon.icns"
+    ]
+    for (name, path) in library {
+        let source = root.appendingPathComponent(path)
+        let artwork = try Data(contentsOf: source)
+        guard artwork.starts(with: Data("icns".utf8)), NSImage(data: artwork)?.isValid == true else {
+            throw CocoaError(.fileReadCorruptFile, userInfo: [NSFilePathErrorKey: source.path])
+        }
+        try artwork.write(to: directory.appendingPathComponent(name + ".icns"), options: .atomic)
+    }
+}

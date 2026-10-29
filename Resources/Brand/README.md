@@ -9,3 +9,16 @@ V 本身由两条纸带形成，底部只有一处折叠：左侧浅色纸带完
 - `Preview.png`：图标预览。
 
 构建流程通过 `scripts/MakeIcon.swift` 打包图标，由 `CFBundleIconFile` 引用 `Contents/Resources/AppIcon.icns`。默认测试／预览构建使用 `Lightsaber/AppIcon-preview-padded.icns` 的红蓝光剑 V；`VCODE_BUILD_FLAVOR=release` 使用本目录的灰白折纸 `AppIcon.icns`。GitHub 预览发行明确选择 preview。构建不需要 SVG 渲染工具；修改矢量设计后需同步更新 PNG 与多尺寸 ICNS。
+
+## 内置图标库
+
+View → App Icon 可选择四款图标：
+
+- Origami：本目录的灰白折纸 V。
+- Lightsaber：`Lightsaber/AppIcon-preview-padded.icns`，红蓝光剑 V。
+- Gummy：`Gummy/AppIcon.icns`，紫底荧光绿软糖 V。
+- Spectrum：`Spectrum/AppIcon.icns`，镜面反射与色散构成的光谱 V。
+
+两款新素材的 `Source.png` 保留用户选定的原始图像；`AppIcon.png` 为去除底板外背景、增加透明留白的应用图标，`AppIcon.icns` 包含常用及 Retina 尺寸。`PreparationPrompt.txt` 保存内置 imagegen 的素材准备提示词，不将写实图伪称为矢量源文件。
+
+打包时四款均复制到 `Contents/Resources/AppIcons`。`VCodeDefaultAppIcon` 标识该安装包的缺省图标；应用偏好保存在 XDG CONFIG_HOME/vcode/app-icon.json，Use Build Default 恢复跟随当前构建。运行时使用 AppKit 更新 Dock 图标，打开关于面板时传入当前图标，不改写已签名的应用包；Finder 继续使用安装包的默认图标。

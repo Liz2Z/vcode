@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var workspace: WorkspaceController!
     private let history = WorkspaceHistoryStore()
     private let appearance = AppearanceController()
+    private let icons = AppIconController()
     private let updates = UpdateController()
     private var windowSave: DispatchWorkItem?
     private lazy var resourceUsage = ResourceUsageWindowController()
@@ -52,6 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             (self?.workspace.view as? WorkspaceView)?.status.message.stringValue = message
         }
         if let error = appearance.settings.persistenceError { appearance.onError?(error) }
+        icons.onError = { [weak self] message in
+            (self?.workspace.view as? WorkspaceView)?.status.message.stringValue = message
+        }
+        icons.start()
         updates.onError = { [weak self] message in
             (self?.workspace.view as? WorkspaceView)?.status.message.stringValue = message
         }
@@ -123,6 +128,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func showResourceUsage() { resourceUsage.showWindow(nil) }
 
+    @objc private func showAbout() {
+        var options: [NSApplication.AboutPanelOptionKey: Any] = [:]
+        if let image = icons.currentImage { options[.applicationIcon] = image }
+        NSApp.orderFrontStandardAboutPanel(options: options)
+    }
+
     private func buildMenu() {
         let main = NSMenu()
         func submenu(_ title: String) -> NSMenu {
@@ -140,7 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if includeInShortcutList { KeyboardShortcutCatalog.register(item) }
         }
         let app = submenu("VCode")
-        item(app, "About VCode", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "")
+        item(app, "About VCode", #selector(showAbout), "", target: self)
         updates.addMenuItems(to: app)
         app.addItem(.separator())
         item(app, "Resource Usage…", #selector(showResourceUsage), "", target: self)
@@ -192,6 +203,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         KeyboardShortcutCatalog.register(shortcuts)
         view.addItem(.separator())
         appearance.addMenuItems(to: view)
+        view.addItem(.separator())
+        icons.addMenu(to: view)
         let window = submenu("Window")
         item(window, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m", includeInShortcutList: false)
         item(window, "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", flags: [.command, .control], includeInShortcutList: false)
